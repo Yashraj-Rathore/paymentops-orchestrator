@@ -2,18 +2,18 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-This first milestone is the foundation scaffold: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, ADRs, and infrastructure placeholders.
+The current milestone is a foundation plus persistence baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, ADRs, SQL Server migrations, tenant/client/key/webhook tables, and a seeded dashboard shell.
 
 ## Workspace
 
 ```text
 apps/
-  api/                  NestJS HTTP API with health and Swagger shell
+  api/                  NestJS HTTP API with health, Swagger, migrations, and tenant operations
   worker/               NestJS worker shell for async orchestration
   web/                  Nuxt 3 + Vue 3 + Pinia operator dashboard shell
   provider-simulator/   NestJS provider simulator shell
 packages/
-  config/               Shared environment validation
+  config/               Shared environment validation and .env loading
   contracts/            Shared API and event contracts
   events/               Event envelope helpers and topic names
   logger/               Structured JSON logger
@@ -47,6 +47,12 @@ Start Docker Desktop before running the full stack:
 pnpm docker:up
 ```
 
+Run migrations explicitly when you want to verify the SQL Server baseline outside app startup:
+
+```powershell
+pnpm db:migrate
+```
+
 Local URLs:
 
 - API: `http://localhost:3000`
@@ -63,13 +69,39 @@ pnpm build        Build all workspace projects
 pnpm lint         Lint the workspace
 pnpm typecheck    Type-check all workspace projects
 pnpm test         Run unit tests
+pnpm db:migrate   Build shared packages and apply SQL Server migrations
 pnpm docker:up    Start the Docker Compose stack
 pnpm docker:down  Stop the Docker Compose stack
 ```
 
-## Foundation Acceptance Criteria
+## API Baseline
 
-- `apps/api` exposes `GET /health` and Swagger at `/docs`.
+- `GET /health` returns API health.
+- `GET /docs` serves Swagger UI.
+- `POST /v1/tenants` creates a tenant and owner membership.
+- `POST /v1/tenants/:tenantId/api-clients` creates an API client.
+- `POST /v1/tenants/:tenantId/api-keys` mints an API key and returns the secret once.
+- `POST /v1/tenants/:tenantId/webhook-endpoints` registers an outbound webhook endpoint.
+- `GET /v1/tenants/:tenantId/summary` returns tenant dashboard data.
+- `GET /v1/demo/dashboard` returns the seeded Northstar Marketplaces dashboard.
+- `POST /v1/demo/seed` idempotently seeds the demo tenant.
+
+## Persistence Baseline
+
+The first SQL Server migration creates:
+
+- `tenants`
+- `user_memberships`
+- `api_clients`
+- `api_keys`
+- `webhook_endpoints`
+- `audit_logs`
+
+API startup runs pending migrations and seeds the demo tenant. The CLI migration command is idempotent and uses the workspace `.env` file.
+
+## Acceptance Criteria
+
+- `apps/api` exposes health, Swagger, tenant operations, API client creation, one-time API key minting, webhook registration, and demo dashboard data.
 - `apps/provider-simulator` exposes `GET /health` and Swagger at `/docs`.
 - Shared packages compile under strict TypeScript.
 - Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, OpenTelemetry Collector, and all app services.

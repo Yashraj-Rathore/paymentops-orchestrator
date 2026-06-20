@@ -38,3 +38,6 @@ Thumbs.db
 # Docker/runtime
 tmp/
 data/
+
+# Local scratch files
+_tmp_*

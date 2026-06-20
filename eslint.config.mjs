@@ -38,6 +38,12 @@ export default [
       "@typescript-eslint/consistent-type-imports": "error"
     }
   },
+  {
+    files: ["apps/api/src/**/*.ts", "apps/provider-simulator/src/**/*.ts", "apps/worker/src/**/*.ts"],
+    rules: {
+      "@typescript-eslint/consistent-type-imports": "off"
+    }
+  },
   ...vue.configs["flat/recommended"],
   {
     files: ["**/*.vue"],

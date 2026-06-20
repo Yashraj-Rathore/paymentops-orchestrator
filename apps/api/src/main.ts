@@ -6,6 +6,8 @@ import { loadConfig } from "@paymentops/config";
 import { createLogger } from "@paymentops/logger";
 
 import { AppModule } from "./app.module.js";
+import { DatabaseInitializer } from "./database/database.initializer.js";
+import { OperationsService } from "./operations/operations.service.js";
 
 async function bootstrap() {
   const config = loadConfig("api");
@@ -17,6 +19,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bufferLogs: true
   });
+
+  await app.get(DatabaseInitializer).initialize();
+  await app.get(OperationsService).seedDemo();
 
   app.enableCors();
   app.setGlobalPrefix("v1", {

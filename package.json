@@ -11,6 +11,7 @@
   "scripts": {
     "build:packages": "pnpm --filter \"./packages/*\" build",
     "dev": "pnpm build:packages && pnpm --parallel --filter @paymentops/api --filter @paymentops/worker --filter @paymentops/web --filter @paymentops/provider-simulator dev",
+    "db:migrate": "pnpm build:packages && pnpm --filter @paymentops/api migrate",
     "build": "pnpm -r --if-present build",
     "lint": "eslint .",
     "typecheck": "pnpm build:packages && pnpm -r --if-present typecheck",

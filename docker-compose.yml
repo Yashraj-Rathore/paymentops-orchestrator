@@ -15,10 +15,14 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - mssql
-      - redis
-      - redpanda
-      - provider-simulator
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      provider-simulator:
+        condition: service_started
 
   worker:
     build:
@@ -32,10 +36,14 @@ services:
       PROVIDER_SIMULATOR_URL: http://provider-simulator:3003
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
-      - mssql
-      - redis
-      - redpanda
-      - provider-simulator
+      mssql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      provider-simulator:
+        condition: service_started
 
   web:
     build:
@@ -46,7 +54,8 @@ services:
     ports:
       - "3001:3001"
     depends_on:
-      - api
+      api:
+        condition: service_started
 
   provider-simulator:
     build:

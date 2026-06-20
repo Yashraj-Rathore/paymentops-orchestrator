@@ -1,0 +1,22 @@
+node_modules
+.pnpm-store
+.git
+.github
+.env
+.env.*
+!.env.example
+
+# Build and test output
+dist
+.output
+.nuxt
+.nitro
+coverage
+playwright-report
+test-results
+
+# Local scratch files
+_tmp_*
+tmp
+data
+*.log

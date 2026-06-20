@@ -1,6 +1,10 @@
-import "dotenv/config";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
+import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
+
+loadWorkspaceEnv();
 
 export type ServiceName = "api" | "worker" | "web" | "provider-simulator";
 
@@ -11,7 +15,9 @@ const baseSchema = z.object({
   WEB_PORT: z.coerce.number().int().positive().default(3001),
   WORKER_PORT: z.coerce.number().int().positive().default(3002),
   PROVIDER_SIMULATOR_PORT: z.coerce.number().int().positive().default(3003),
-  DATABASE_URL: z.string().default("sqlserver://localhost:1433/paymentops"),
+  DATABASE_URL: z
+    .string()
+    .default("sqlserver://sa:YourStrong!Passw0rd@localhost:1433;database=paymentops;encrypt=false;trustServerCertificate=true"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   REDPANDA_BROKERS: z.string().default("localhost:9092"),
   AUTH0_DOMAIN: z.string().default("paymentops-dev.us.auth0.com"),
@@ -69,5 +75,26 @@ function portForService(serviceName: ServiceName, env: z.infer<typeof baseSchema
       return env.WORKER_PORT;
     case "provider-simulator":
       return env.PROVIDER_SIMULATOR_PORT;
+  }
+}
+
+function loadWorkspaceEnv(): void {
+  let directory = process.cwd();
+
+  while (true) {
+    const candidate = join(directory, ".env");
+
+    if (existsSync(candidate)) {
+      loadDotenv({ path: candidate });
+      return;
+    }
+
+    const parent = dirname(directory);
+
+    if (parent === directory) {
+      return;
+    }
+
+    directory = parent;
   }
 }
