@@ -1,0 +1,134 @@
+name: paymentops-orchestrator
+
+services:
+  api:
+    build:
+      context: .
+    command: pnpm --filter @paymentops/api dev
+    environment:
+      API_PORT: 3000
+      DATABASE_URL: sqlserver://sa:${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}@mssql:1433;database=paymentops;encrypt=false;trustServerCertificate=true
+      REDIS_URL: redis://redis:6379
+      REDPANDA_BROKERS: redpanda:9092
+      PROVIDER_SIMULATOR_URL: http://provider-simulator:3003
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "3000:3000"
+    depends_on:
+      - mssql
+      - redis
+      - redpanda
+      - provider-simulator
+
+  worker:
+    build:
+      context: .
+    command: pnpm --filter @paymentops/worker dev
+    environment:
+      WORKER_PORT: 3002
+      DATABASE_URL: sqlserver://sa:${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}@mssql:1433;database=paymentops;encrypt=false;trustServerCertificate=true
+      REDIS_URL: redis://redis:6379
+      REDPANDA_BROKERS: redpanda:9092
+      PROVIDER_SIMULATOR_URL: http://provider-simulator:3003
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      - mssql
+      - redis
+      - redpanda
+      - provider-simulator
+
+  web:
+    build:
+      context: .
+    command: pnpm --filter @paymentops/web dev --host 0.0.0.0 --port 3001
+    environment:
+      NUXT_PUBLIC_API_BASE_URL: http://localhost:3000
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api
+
+  provider-simulator:
+    build:
+      context: .
+    command: pnpm --filter @paymentops/provider-simulator dev
+    environment:
+      PROVIDER_SIMULATOR_PORT: 3003
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "3003:3003"
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 1G
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+      - "9644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otelcol/config.yml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+
+volumes:
+  mssql-data:
+  redpanda-data:

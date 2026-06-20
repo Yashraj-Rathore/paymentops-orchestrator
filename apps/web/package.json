@@ -1,0 +1,20 @@
+{
+  "name": "@paymentops/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0 --port 3001",
+    "build": "nuxt build",
+    "lint": "eslint .",
+    "typecheck": "nuxt typecheck",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@paymentops/ui": "workspace:*",
+    "@pinia/nuxt": "^0.9.0",
+    "nuxt": "^3.15.1",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13"
+  }
+}
