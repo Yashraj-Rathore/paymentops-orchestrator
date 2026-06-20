@@ -109,6 +109,12 @@ services:
       - "9644:9644"
     volumes:
       - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   redpanda-console:
     image: docker.redpanda.com/redpandadata/console:v2.7.2
@@ -117,7 +123,9 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - redpanda
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.104.0
