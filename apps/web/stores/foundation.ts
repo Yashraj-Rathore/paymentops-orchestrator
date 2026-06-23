@@ -3,6 +3,8 @@ import type {
   CreateApiClientRequest,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  CreatePayoutRequest,
+  CreatePayoutResponse,
   CreateTenantRequest,
   CreateWebhookEndpointRequest,
   TenantDashboardResponse,
@@ -15,6 +17,7 @@ interface FoundationState {
   dashboard: TenantDashboardResponse | null;
   activeTenantId: string | null;
   revealedApiKeySecret: string | null;
+  lastCreatedPayout: CreatePayoutResponse | null;
   saving: boolean;
   loading: boolean;
   message: string | null;
@@ -26,6 +29,7 @@ export const useFoundationStore = defineStore("foundation", {
     dashboard: null,
     activeTenantId: null,
     revealedApiKeySecret: null,
+    lastCreatedPayout: null,
     saving: false,
     loading: false,
     message: null,
@@ -119,6 +123,29 @@ export const useFoundationStore = defineStore("foundation", {
       });
     },
 
+    async createPayout(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      apiKeySecret: string,
+      idempotencyKey: string,
+      body: CreatePayoutRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+
+      await this.mutate(async () => {
+        const payout = await $fetch<CreatePayoutResponse>(`${apiBaseUrl}/v1/tenants/${tenantId}/payouts`, {
+          method: "POST",
+          headers: apiKeyHeaders(apiKeySecret, idempotencyKey),
+          body
+        });
+        this.lastCreatedPayout = payout;
+        this.message = payout.replayed
+          ? `Replayed payout ${payout.id}`
+          : `Created payout ${payout.id}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
     clearSecret() {
       this.revealedApiKeySecret = null;
     },
@@ -143,6 +170,13 @@ function adminHeaders(devAdminToken: string): Record<string, string> {
   return devAdminToken.trim().length > 0
     ? { "x-paymentops-dev-admin-token": devAdminToken.trim() }
     : {};
+}
+
+function apiKeyHeaders(apiKeySecret: string, idempotencyKey: string): Record<string, string> {
+  return {
+    "x-api-key": apiKeySecret.trim(),
+    "Idempotency-Key": idempotencyKey.trim()
+  };
 }
 
 function requireTenantId(dashboard: TenantDashboardResponse | null): string {

@@ -3,6 +3,9 @@ import type {
   ApiClientSummary,
   ApiKeySummary,
   AuditLogSummary,
+  LedgerEntrySummary,
+  OutboxEventSummary,
+  PayoutSummary,
   TenantDashboardResponse,
   TenantSummary,
   UserMembershipSummary,
@@ -63,6 +66,39 @@ interface AuditLogRow {
   action: string;
   resource_type: string;
   resource_id: string;
+  created_at: Date;
+}
+interface PayoutRow {
+  external_id: string;
+  provider_payout_id: string | null;
+  amount_minor: number | string;
+  currency: string;
+  destination_account: string;
+  reference: string | null;
+  description: string | null;
+  status: PayoutSummary["status"];
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface LedgerEntryRow {
+  id: number | string;
+  external_id: string;
+  payout_external_id: string;
+  direction: "debit" | "credit";
+  account_name: string;
+  amount_minor: number | string;
+  currency: string;
+  created_at: Date;
+}
+
+interface OutboxEventRow {
+  id: string;
+  event_type: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  status: OutboxEventSummary["status"];
+  attempts: number;
   created_at: Date;
 }
 
@@ -326,18 +362,63 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
+    const payouts = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<PayoutRow>(`
+SELECT TOP 10 external_id, provider_payout_id, amount_minor, currency, destination_account, reference, description, status, created_at, updated_at
+FROM dbo.payouts
+WHERE tenant_id = @tenantId
+ORDER BY created_at DESC;
+`);
+
+    const ledgerEntries = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<LedgerEntryRow>(`
+SELECT TOP 10
+  ledger_entries.id,
+  ledger_entries.external_id,
+  payouts.external_id AS payout_external_id,
+  ledger_entries.direction,
+  ledger_entries.account_name,
+  ledger_entries.amount_minor,
+  ledger_entries.currency,
+  ledger_entries.created_at
+FROM dbo.ledger_entries
+INNER JOIN dbo.payouts ON payouts.id = ledger_entries.payout_id
+WHERE ledger_entries.tenant_id = @tenantId
+ORDER BY ledger_entries.created_at DESC, ledger_entries.id DESC;
+`);
+
+    const outboxEvents = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<OutboxEventRow>(`
+SELECT TOP 10 id, event_type, aggregate_type, aggregate_id, status, attempts, created_at
+FROM dbo.outbox_events
+WHERE tenant_id = @tenantId
+ORDER BY created_at DESC;
+`);
+
     return {
       tenant: mapTenant(tenant),
       memberships: memberships.recordset.map(mapMembership),
       apiClients: apiClients.recordset.map(mapApiClient),
       apiKeys: apiKeys.recordset.map(mapApiKey),
       webhookEndpoints: webhooks.recordset.map(mapWebhookEndpoint),
+      payouts: payouts.recordset.map((row) => mapPayout(row, tenant.external_id)),
+      ledgerEntries: ledgerEntries.recordset.map(mapLedgerEntry),
+      outboxEvents: outboxEvents.recordset.map(mapOutboxEvent),
       auditLogs: auditLogs.recordset.map(mapAuditLog),
       metrics: {
         members: memberships.recordset.length,
         apiClients: apiClients.recordset.length,
         activeApiKeys: apiKeys.recordset.length,
         webhookEndpoints: webhooks.recordset.length,
+        payouts: payouts.recordset.length,
+        ledgerEntries: ledgerEntries.recordset.length,
+        pendingOutboxEvents: outboxEvents.recordset.filter((event) => event.status === "pending").length,
         auditEvents: auditLogs.recordset.length
       }
     };
@@ -608,6 +689,47 @@ function mapWebhookEndpoint(row: WebhookEndpointRow): WebhookEndpointSummary {
     description: row.description,
     eventSubscriptions: JSON.parse(row.event_subscriptions_json) as string[],
     status: row.status,
+    createdAt: row.created_at.toISOString()
+  };
+}
+
+function mapPayout(row: PayoutRow, tenantExternalId: string): PayoutSummary {
+  return {
+    id: row.external_id,
+    tenantId: tenantExternalId,
+    providerPayoutId: row.provider_payout_id,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency.trim(),
+    destinationAccount: row.destination_account,
+    reference: row.reference,
+    description: row.description,
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString()
+  };
+}
+
+function mapLedgerEntry(row: LedgerEntryRow): LedgerEntrySummary {
+  return {
+    id: String(row.id),
+    externalId: row.external_id,
+    payoutId: row.payout_external_id,
+    direction: row.direction,
+    account: row.account_name,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency.trim(),
+    createdAt: row.created_at.toISOString()
+  };
+}
+
+function mapOutboxEvent(row: OutboxEventRow): OutboxEventSummary {
+  return {
+    id: row.id,
+    eventType: row.event_type,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    status: row.status,
+    attempts: row.attempts,
     createdAt: row.created_at.toISOString()
   };
 }

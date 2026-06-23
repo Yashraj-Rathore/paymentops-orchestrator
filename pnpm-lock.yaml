@@ -159,18 +159,28 @@ importers:
       '@paymentops/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@paymentops/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@paymentops/events':
         specifier: workspace:*
         version: link:../../packages/events
       '@paymentops/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      mssql:
+        specifier: ^12.2.0
+        version: 12.5.5
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
       rxjs:
         specifier: ^7.8.1
         version: 7.8.2
+    devDependencies:
+      '@types/mssql':
+        specifier: ^12.3.0
+        version: 12.3.0
 
   packages/config:
     dependencies:

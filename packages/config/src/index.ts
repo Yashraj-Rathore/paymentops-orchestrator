@@ -26,7 +26,8 @@ const baseSchema = z.object({
   AUTH0_ROLE_CLAIM: z.string().default("https://paymentops.local/roles"),
   PAYMENTOPS_DEV_ADMIN_TOKEN: z.string().min(1).default("dev-admin-token"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().default("http://localhost:4318"),
-  PROVIDER_SIMULATOR_URL: z.string().url().default("http://localhost:3003")
+  PROVIDER_SIMULATOR_URL: z.string().url().default("http://localhost:3003"),
+  PAYMENTOPS_API_INTERNAL_URL: z.string().url().default("http://localhost:3000")
 });
 
 export interface PaymentOpsConfig {
@@ -48,6 +49,7 @@ export interface PaymentOpsConfig {
   };
   otelExporterOtlpEndpoint: string;
   providerSimulatorUrl: string;
+  apiInternalUrl: string;
 }
 
 export function loadConfig(
@@ -74,7 +76,8 @@ export function loadConfig(
       audience: parsed.AUTH0_AUDIENCE
     },
     otelExporterOtlpEndpoint: parsed.OTEL_EXPORTER_OTLP_ENDPOINT,
-    providerSimulatorUrl: parsed.PROVIDER_SIMULATOR_URL
+    providerSimulatorUrl: parsed.PROVIDER_SIMULATOR_URL,
+    apiInternalUrl: parsed.PAYMENTOPS_API_INTERNAL_URL
   };
 }
 

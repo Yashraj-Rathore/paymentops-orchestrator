@@ -35,6 +35,99 @@ export interface AuthSessionResponse {
   apiKeyId: string | null;
 }
 
+export type PayoutStatus = "queued" | "processing" | "paid" | "failed" | "canceled" | "needs_approval";
+
+export interface PayoutSummary {
+  id: string;
+  tenantId: string;
+  providerPayoutId: string | null;
+  amountMinor: number;
+  currency: string;
+  destinationAccount: string;
+  reference: string | null;
+  description: string | null;
+  status: PayoutStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LedgerEntrySummary {
+  id: string;
+  externalId: string;
+  payoutId: string;
+  direction: "debit" | "credit";
+  account: string;
+  amountMinor: number;
+  currency: string;
+  createdAt: string;
+}
+
+export interface PayoutStatusHistorySummary {
+  id: string;
+  fromStatus: PayoutStatus | null;
+  toStatus: PayoutStatus;
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface OutboxEventSummary {
+  id: string;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
+  status: "pending" | "published" | "failed" | "dead_letter";
+  attempts: number;
+  createdAt: string;
+}
+
+export interface PayoutDetailsResponse extends PayoutSummary {
+  ledgerEntries: LedgerEntrySummary[];
+  statusHistory: PayoutStatusHistorySummary[];
+  outboxEvents: OutboxEventSummary[];
+}
+
+export interface CreatePayoutRequest {
+  amountMinor: number;
+  currency: string;
+  destinationAccount: string;
+  reference?: string | null;
+  description?: string | null;
+}
+
+export interface CreatePayoutResponse extends PayoutDetailsResponse {
+  idempotencyKey: string;
+  replayed: boolean;
+}
+
+export interface ProviderPayoutRequest {
+  payoutId: string;
+  tenantId: string;
+  amountMinor: number;
+  currency: string;
+  destinationAccount: string;
+  callbackUrl: string;
+}
+
+export interface ProviderPayoutResponse {
+  providerPayoutId: string;
+  status: "processing";
+  callbackDelayMs: number;
+}
+
+export interface ProviderPayoutCallbackRequest {
+  providerPayoutId: string;
+  payoutId: string;
+  tenantId: string;
+  status: "paid" | "failed";
+  reason: string;
+}
+
+export interface ProviderPayoutCallbackResponse {
+  payoutId: string;
+  status: PayoutStatus;
+  accepted: boolean;
+}
+
 export interface TenantSummary {
   id: string;
   name: string;
@@ -95,12 +188,18 @@ export interface TenantDashboardResponse {
   apiClients: ApiClientSummary[];
   apiKeys: ApiKeySummary[];
   webhookEndpoints: WebhookEndpointSummary[];
+  payouts: PayoutSummary[];
+  ledgerEntries: LedgerEntrySummary[];
+  outboxEvents: OutboxEventSummary[];
   auditLogs: AuditLogSummary[];
   metrics: {
     members: number;
     apiClients: number;
     activeApiKeys: number;
     webhookEndpoints: number;
+    payouts: number;
+    ledgerEntries: number;
+    pendingOutboxEvents: number;
     auditEvents: number;
   };
 }

@@ -18,6 +18,11 @@ async function bootstrap() {
     bufferLogs: true
   });
 
+  app.enableCors();
+  app.setGlobalPrefix("v1", {
+    exclude: ["health", "docs", "docs-json"]
+  });
+
   const openApiConfig = new DocumentBuilder()
     .setTitle("PaymentOps Provider Simulator")
     .setDescription("Foundation simulator for external payment rail behavior.")

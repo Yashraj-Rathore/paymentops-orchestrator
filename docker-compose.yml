@@ -16,6 +16,7 @@ services:
       REDIS_URL: redis://redis:6379
       REDPANDA_BROKERS: redpanda:9092
       PROVIDER_SIMULATOR_URL: http://provider-simulator:3003
+      PAYMENTOPS_API_INTERNAL_URL: http://api:3000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "3000:3000"
@@ -39,6 +40,7 @@ services:
       REDIS_URL: redis://redis:6379
       REDPANDA_BROKERS: redpanda:9092
       PROVIDER_SIMULATOR_URL: http://provider-simulator:3003
+      PAYMENTOPS_API_INTERNAL_URL: http://api:3000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       mssql:

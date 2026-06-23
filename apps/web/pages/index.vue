@@ -9,7 +9,15 @@ const config = useRuntimeConfig();
 const apiBaseUrl = String(config.public.apiBaseUrl);
 const devAdminToken = String(config.public.devAdminToken ?? "");
 const store = useFoundationStore();
-const { dashboard, loading, saving, error, message, revealedApiKeySecret } = storeToRefs(store);
+const {
+  dashboard,
+  loading,
+  saving,
+  error,
+  message,
+  revealedApiKeySecret,
+  lastCreatedPayout
+} = storeToRefs(store);
 
 const tenantForm = reactive({
   name: "",
@@ -28,8 +36,18 @@ const webhookForm = reactive({
   description: "",
   eventSubscriptions: "payout.created.v1, payout.settled.v1"
 });
+const payoutForm = reactive({
+  amountMinor: 12500,
+  currency: "USD",
+  destinationAccount: "acct_demo_merchant_bank",
+  reference: "",
+  description: "",
+  apiKeySecret: "",
+  idempotencyKey: ""
+});
 
 onMounted(() => {
+  payoutForm.idempotencyKey = newIdempotencyKey();
   void store.load(apiBaseUrl, devAdminToken);
 });
 
@@ -41,6 +59,15 @@ watch(
     }
   },
   { immediate: true }
+);
+
+watch(
+  revealedApiKeySecret,
+  (secret) => {
+    if (secret) {
+      payoutForm.apiKeySecret = secret;
+    }
+  }
 );
 
 const lanes = computed(() => [
@@ -60,9 +87,19 @@ const lanes = computed(() => [
     state: "one-time reveal"
   },
   {
-    label: "Webhooks",
-    value: String(dashboard.value?.metrics.webhookEndpoints ?? 0),
-    state: "signed"
+    label: "Payouts",
+    value: String(dashboard.value?.metrics.payouts ?? 0),
+    state: "idempotent"
+  },
+  {
+    label: "Ledger",
+    value: String(dashboard.value?.metrics.ledgerEntries ?? 0),
+    state: "append-only"
+  },
+  {
+    label: "Outbox",
+    value: String(dashboard.value?.metrics.pendingOutboxEvents ?? 0),
+    state: "pending events"
   }
 ]);
 
@@ -113,6 +150,28 @@ async function submitWebhook() {
   }
 }
 
+async function submitPayout() {
+  await store.createPayout(
+    apiBaseUrl,
+    devAdminToken,
+    payoutForm.apiKeySecret,
+    payoutForm.idempotencyKey,
+    {
+      amountMinor: Number(payoutForm.amountMinor),
+      currency: payoutForm.currency,
+      destinationAccount: payoutForm.destinationAccount,
+      reference: payoutForm.reference || null,
+      description: payoutForm.description || null
+    }
+  );
+
+  if (!error.value) {
+    payoutForm.reference = "";
+    payoutForm.description = "";
+    payoutForm.idempotencyKey = newIdempotencyKey();
+  }
+}
+
 async function copySecret() {
   if (revealedApiKeySecret.value) {
     await navigator.clipboard.writeText(revealedApiKeySecret.value);
@@ -124,6 +183,21 @@ function csv(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function formatMinor(amountMinor: number, currency: string): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency
+  }).format(amountMinor / 100);
+}
+
+function newIdempotencyKey(): string {
+  if (globalThis.crypto && "randomUUID" in globalThis.crypto) {
+    return `idem_${globalThis.crypto.randomUUID()}`;
+  }
+
+  return `idem_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 </script>
 
@@ -142,6 +216,7 @@ function csv(value: string): string[] {
         <a class="nav-item active" href="#">Dashboard</a>
         <a class="nav-item" href="#forms">Tenants</a>
         <a class="nav-item" href="#clients">API Clients</a>
+        <a class="nav-item" href="#payouts">Payouts</a>
         <a class="nav-item" href="#webhooks">Webhooks</a>
         <a class="nav-item" href="#audit">Audit</a>
       </nav>
@@ -184,9 +259,19 @@ function csv(value: string): string[] {
           <small>Hashed at rest</small>
         </article>
         <article class="metric">
-          <span>Webhook endpoints</span>
-          <strong>{{ dashboard?.metrics.webhookEndpoints ?? 0 }}</strong>
-          <small>Signed outbound events</small>
+          <span>Payouts</span>
+          <strong>{{ dashboard?.metrics.payouts ?? 0 }}</strong>
+          <small>Idempotent creates</small>
+        </article>
+        <article class="metric">
+          <span>Ledger entries</span>
+          <strong>{{ dashboard?.metrics.ledgerEntries ?? 0 }}</strong>
+          <small>Append-only accounting</small>
+        </article>
+        <article class="metric">
+          <span>Pending events</span>
+          <strong>{{ dashboard?.metrics.pendingOutboxEvents ?? 0 }}</strong>
+          <small>Outbox publish queue</small>
         </article>
       </section>
 
@@ -253,6 +338,37 @@ function csv(value: string): string[] {
           <button class="primary-button" :disabled="saving || !dashboard" type="submit">Mint</button>
         </form>
 
+        <form id="payouts" class="panel form-panel" @submit.prevent="submitPayout">
+          <header>
+            <h2>Create Payout</h2>
+          </header>
+          <label>
+            <span>API key secret</span>
+            <input v-model="payoutForm.apiKeySecret" required type="password" placeholder="pops_sk_test_...">
+          </label>
+          <label>
+            <span>Amount minor</span>
+            <input v-model.number="payoutForm.amountMinor" required min="1" step="1" type="number">
+          </label>
+          <label>
+            <span>Currency</span>
+            <input v-model="payoutForm.currency" required maxlength="3" type="text">
+          </label>
+          <label>
+            <span>Destination account</span>
+            <input v-model="payoutForm.destinationAccount" required type="text">
+          </label>
+          <label>
+            <span>Reference</span>
+            <input v-model="payoutForm.reference" type="text" placeholder="invoice-1042">
+          </label>
+          <label>
+            <span>Idempotency key</span>
+            <input v-model="payoutForm.idempotencyKey" required type="text">
+          </label>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Create</button>
+        </form>
+
         <form id="webhooks" class="panel form-panel" @submit.prevent="submitWebhook">
           <header>
             <h2>Register Webhook</h2>
@@ -284,6 +400,13 @@ function csv(value: string): string[] {
         </div>
       </section>
 
+      <section v-if="lastCreatedPayout" class="secret-reveal" aria-label="Created payout">
+        <div>
+          <span>Payout accepted</span>
+          <code>{{ lastCreatedPayout.id }} / {{ lastCreatedPayout.status }} / {{ lastCreatedPayout.idempotencyKey }}</code>
+        </div>
+      </section>
+
       <section class="data-grid" aria-label="Configured resources">
         <article class="panel">
           <header>
@@ -308,6 +431,45 @@ function csv(value: string): string[] {
               <span>{{ apiKey.keyPrefix }}...</span>
             </div>
             <small>{{ apiKey.permissions.join(", ") }}</small>
+          </div>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Recent Payouts</h2>
+          </header>
+          <div v-for="payout in dashboard?.payouts" :key="payout.id" class="row-item">
+            <div>
+              <strong>{{ formatMinor(payout.amountMinor, payout.currency) }}</strong>
+              <span>{{ payout.id }} / {{ payout.destinationAccount }} / {{ payout.providerPayoutId ?? "not dispatched" }}</span>
+            </div>
+            <small>{{ payout.status }}</small>
+          </div>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Ledger Entries</h2>
+          </header>
+          <div v-for="entry in dashboard?.ledgerEntries" :key="entry.id" class="row-item">
+            <div>
+              <strong>{{ entry.direction }} / {{ entry.account }}</strong>
+              <span>{{ entry.payoutId }} / {{ entry.externalId }}</span>
+            </div>
+            <small>{{ formatMinor(entry.amountMinor, entry.currency) }}</small>
+          </div>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Outbox Events</h2>
+          </header>
+          <div v-for="event in dashboard?.outboxEvents" :key="event.id" class="row-item">
+            <div>
+              <strong>{{ event.eventType }}</strong>
+              <span>{{ event.aggregateType }} / {{ event.aggregateId }}</span>
+            </div>
+            <small>{{ event.status }}</small>
           </div>
         </article>
 
