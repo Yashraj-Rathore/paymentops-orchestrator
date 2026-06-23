@@ -20,6 +20,21 @@ export interface EventEnvelope<TPayload extends Record<string, unknown> = Record
   payload: TPayload;
 }
 
+export type AuthRole = "operations_admin" | "merchant_owner" | "developer";
+
+export type AuthPrincipalType = "api_key" | "jwt" | "dev_admin";
+
+export interface AuthSessionResponse {
+  type: AuthPrincipalType;
+  subject: string;
+  email: string | null;
+  roles: AuthRole[];
+  permissions: string[];
+  tenantId: string | null;
+  apiClientId: string | null;
+  apiKeyId: string | null;
+}
+
 export interface TenantSummary {
   id: string;
   name: string;

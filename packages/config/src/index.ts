@@ -20,8 +20,11 @@ const baseSchema = z.object({
     .default("sqlserver://sa:YourStrong!Passw0rd@localhost:1433;database=paymentops;encrypt=false;trustServerCertificate=true"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   REDPANDA_BROKERS: z.string().default("localhost:9092"),
+  AUTH_MODE: z.enum(["development", "auth0"]).default("development"),
   AUTH0_DOMAIN: z.string().default("paymentops-dev.us.auth0.com"),
   AUTH0_AUDIENCE: z.string().default("https://api.paymentops.local"),
+  AUTH0_ROLE_CLAIM: z.string().default("https://paymentops.local/roles"),
+  PAYMENTOPS_DEV_ADMIN_TOKEN: z.string().min(1).default("dev-admin-token"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().default("http://localhost:4318"),
   PROVIDER_SIMULATOR_URL: z.string().url().default("http://localhost:3003")
 });
@@ -34,6 +37,11 @@ export interface PaymentOpsConfig {
   databaseUrl: string;
   redisUrl: string;
   redpandaBrokers: string[];
+  auth: {
+    mode: "development" | "auth0";
+    devAdminToken: string;
+    roleClaim: string;
+  };
   auth0: {
     domain: string;
     audience: string;
@@ -56,6 +64,11 @@ export function loadConfig(
     databaseUrl: parsed.DATABASE_URL,
     redisUrl: parsed.REDIS_URL,
     redpandaBrokers: parsed.REDPANDA_BROKERS.split(",").map((broker) => broker.trim()),
+    auth: {
+      mode: parsed.AUTH_MODE,
+      devAdminToken: parsed.PAYMENTOPS_DEV_ADMIN_TOKEN,
+      roleClaim: parsed.AUTH0_ROLE_CLAIM
+    },
     auth0: {
       domain: parsed.AUTH0_DOMAIN,
       audience: parsed.AUTH0_AUDIENCE

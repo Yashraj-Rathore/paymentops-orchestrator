@@ -2,16 +2,46 @@
 import { useRuntimeConfig } from "#app";
 import { paymentOpsPalette } from "@paymentops/ui";
 import { storeToRefs } from "pinia";
-import { computed, onMounted } from "vue";
+import { computed, onMounted, reactive, watch } from "vue";
 import { useFoundationStore } from "~/stores/foundation";
 
 const config = useRuntimeConfig();
+const apiBaseUrl = String(config.public.apiBaseUrl);
+const devAdminToken = String(config.public.devAdminToken ?? "");
 const store = useFoundationStore();
-const { dashboard, loading, error } = storeToRefs(store);
+const { dashboard, loading, saving, error, message, revealedApiKeySecret } = storeToRefs(store);
+
+const tenantForm = reactive({
+  name: "",
+  ownerEmail: ""
+});
+const clientForm = reactive({
+  name: ""
+});
+const apiKeyForm = reactive({
+  name: "",
+  apiClientId: "",
+  permissions: "payouts:create, payouts:read"
+});
+const webhookForm = reactive({
+  url: "",
+  description: "",
+  eventSubscriptions: "payout.created.v1, payout.settled.v1"
+});
 
 onMounted(() => {
-  void store.load(config.public.apiBaseUrl);
+  void store.load(apiBaseUrl, devAdminToken);
 });
+
+watch(
+  () => dashboard.value?.apiClients[0]?.id,
+  (apiClientId) => {
+    if (apiClientId && !apiKeyForm.apiClientId) {
+      apiKeyForm.apiClientId = apiClientId;
+    }
+  },
+  { immediate: true }
+);
 
 const lanes = computed(() => [
   {
@@ -35,6 +65,66 @@ const lanes = computed(() => [
     state: "signed"
   }
 ]);
+
+async function submitTenant() {
+  await store.createTenant(apiBaseUrl, devAdminToken, {
+    name: tenantForm.name,
+    ownerEmail: tenantForm.ownerEmail || undefined
+  });
+
+  if (!error.value) {
+    tenantForm.name = "";
+    tenantForm.ownerEmail = "";
+  }
+}
+
+async function submitApiClient() {
+  await store.createApiClient(apiBaseUrl, devAdminToken, {
+    name: clientForm.name
+  });
+
+  if (!error.value) {
+    clientForm.name = "";
+  }
+}
+
+async function submitApiKey() {
+  await store.createApiKey(apiBaseUrl, devAdminToken, {
+    name: apiKeyForm.name,
+    apiClientId: apiKeyForm.apiClientId,
+    permissions: csv(apiKeyForm.permissions)
+  });
+
+  if (!error.value) {
+    apiKeyForm.name = "";
+  }
+}
+
+async function submitWebhook() {
+  await store.createWebhookEndpoint(apiBaseUrl, devAdminToken, {
+    url: webhookForm.url,
+    description: webhookForm.description || null,
+    eventSubscriptions: csv(webhookForm.eventSubscriptions)
+  });
+
+  if (!error.value) {
+    webhookForm.url = "";
+    webhookForm.description = "";
+  }
+}
+
+async function copySecret() {
+  if (revealedApiKeySecret.value) {
+    await navigator.clipboard.writeText(revealedApiKeySecret.value);
+  }
+}
+
+function csv(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 </script>
 
 <template>
@@ -50,10 +140,10 @@ const lanes = computed(() => [
 
       <nav class="nav" aria-label="Primary">
         <a class="nav-item active" href="#">Dashboard</a>
-        <a class="nav-item" href="#">Tenants</a>
-        <a class="nav-item" href="#">API Clients</a>
-        <a class="nav-item" href="#">Webhooks</a>
-        <a class="nav-item" href="#">Audit</a>
+        <a class="nav-item" href="#forms">Tenants</a>
+        <a class="nav-item" href="#clients">API Clients</a>
+        <a class="nav-item" href="#webhooks">Webhooks</a>
+        <a class="nav-item" href="#audit">Audit</a>
       </nav>
     </aside>
 
@@ -67,13 +157,15 @@ const lanes = computed(() => [
           class="icon-button"
           type="button"
           title="Refresh dashboard"
-          @click="store.load(config.public.apiBaseUrl)"
+          :disabled="loading"
+          @click="store.load(apiBaseUrl, devAdminToken)"
         >
-          <span aria-hidden="true">?</span>
+          <span aria-hidden="true">R</span>
         </button>
       </header>
 
       <p v-if="error" class="error-state">{{ error }}</p>
+      <p v-if="message" class="success-state">{{ message }}</p>
 
       <section class="status-grid" aria-label="Tenant status">
         <article class="metric">
@@ -108,6 +200,88 @@ const lanes = computed(() => [
           </div>
           <p>{{ lane.value }}</p>
         </article>
+      </section>
+
+      <section id="forms" class="form-grid" aria-label="Resource creation">
+        <form class="panel form-panel" @submit.prevent="submitTenant">
+          <header>
+            <h2>Create Tenant</h2>
+          </header>
+          <label>
+            <span>Name</span>
+            <input v-model="tenantForm.name" required type="text" placeholder="Acme Marketplaces">
+          </label>
+          <label>
+            <span>Owner email</span>
+            <input v-model="tenantForm.ownerEmail" type="email" placeholder="owner@example.com">
+          </label>
+          <button class="primary-button" :disabled="saving" type="submit">Create</button>
+        </form>
+
+        <form id="clients" class="panel form-panel" @submit.prevent="submitApiClient">
+          <header>
+            <h2>Create API Client</h2>
+          </header>
+          <label>
+            <span>Name</span>
+            <input v-model="clientForm.name" required type="text" placeholder="Checkout Service">
+          </label>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Create</button>
+        </form>
+
+        <form class="panel form-panel" @submit.prevent="submitApiKey">
+          <header>
+            <h2>Mint API Key</h2>
+          </header>
+          <label>
+            <span>Name</span>
+            <input v-model="apiKeyForm.name" required type="text" placeholder="Production checkout key">
+          </label>
+          <label>
+            <span>API client</span>
+            <select v-model="apiKeyForm.apiClientId" required>
+              <option value="" disabled>Select client</option>
+              <option v-for="client in dashboard?.apiClients" :key="client.id" :value="client.id">
+                {{ client.name }}
+              </option>
+            </select>
+          </label>
+          <label>
+            <span>Permissions</span>
+            <input v-model="apiKeyForm.permissions" required type="text">
+          </label>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Mint</button>
+        </form>
+
+        <form id="webhooks" class="panel form-panel" @submit.prevent="submitWebhook">
+          <header>
+            <h2>Register Webhook</h2>
+          </header>
+          <label>
+            <span>URL</span>
+            <input v-model="webhookForm.url" required type="url" placeholder="https://example.com/paymentops">
+          </label>
+          <label>
+            <span>Description</span>
+            <input v-model="webhookForm.description" type="text" placeholder="Payout events">
+          </label>
+          <label>
+            <span>Events</span>
+            <input v-model="webhookForm.eventSubscriptions" required type="text">
+          </label>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Register</button>
+        </form>
+      </section>
+
+      <section v-if="revealedApiKeySecret" class="secret-reveal" aria-label="Minted API key secret">
+        <div>
+          <span>API key secret</span>
+          <code>{{ revealedApiKeySecret }}</code>
+        </div>
+        <div class="button-row">
+          <button class="secondary-button" type="button" @click="copySecret">Copy</button>
+          <button class="secondary-button" type="button" @click="store.clearSecret()">Dismiss</button>
+        </div>
       </section>
 
       <section class="data-grid" aria-label="Configured resources">
@@ -150,7 +324,7 @@ const lanes = computed(() => [
           </div>
         </article>
 
-        <article class="panel wide">
+        <article id="audit" class="panel wide">
           <header>
             <h2>Audit Trail</h2>
           </header>

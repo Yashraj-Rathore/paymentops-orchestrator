@@ -2,15 +2,15 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation plus persistence baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, ADRs, SQL Server migrations, tenant/client/key/webhook tables, and a seeded dashboard shell.
+The current milestone is a foundation, persistence, and identity baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, and a usable dashboard shell.
 
 ## Workspace
 
 ```text
 apps/
-  api/                  NestJS HTTP API with health, Swagger, migrations, and tenant operations
+  api/                  NestJS HTTP API with health, Swagger, auth, migrations, and tenant operations
   worker/               NestJS worker shell for async orchestration
-  web/                  Nuxt 3 + Vue 3 + Pinia operator dashboard shell
+  web/                  Nuxt 3 + Vue 3 + Pinia operator dashboard with create forms
   provider-simulator/   NestJS provider simulator shell
 packages/
   config/               Shared environment validation and .env loading
@@ -74,6 +74,17 @@ pnpm docker:up    Start the Docker Compose stack
 pnpm docker:down  Stop the Docker Compose stack
 ```
 
+## Identity Baseline
+
+Admin routes accept Auth0 JWT bearer tokens and enforce role metadata. Local development also supports `x-paymentops-dev-admin-token` when `AUTH_MODE=development`; this is disabled for production by config and should only be used for local demos.
+
+API-key routes accept either `Authorization: Bearer pops_...` or `x-api-key`. Incoming keys are SHA-256 hashed and matched against `api_keys.key_hash`; only active tenants, active clients, unrevoked keys, and unexpired keys authenticate.
+
+Useful auth smoke endpoints:
+
+- `GET /v1/auth/admin/session`
+- `GET /v1/auth/api-key/session`
+
 ## API Baseline
 
 - `GET /health` returns API health.
@@ -101,7 +112,8 @@ API startup runs pending migrations and seeds the demo tenant. The CLI migration
 
 ## Acceptance Criteria
 
-- `apps/api` exposes health, Swagger, tenant operations, API client creation, one-time API key minting, webhook registration, and demo dashboard data.
+- `apps/api` exposes health, Swagger, protected tenant operations, API client creation, one-time API key minting, webhook registration, demo dashboard data, Auth0 JWT validation, and API-key session introspection.
+- `apps/web` can create tenants, API clients, one-time API keys, and webhook endpoints from the dashboard shell.
 - `apps/provider-simulator` exposes `GET /health` and Swagger at `/docs`.
 - Shared packages compile under strict TypeScript.
 - Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, OpenTelemetry Collector, and all app services.

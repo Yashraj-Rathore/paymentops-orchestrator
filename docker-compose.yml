@@ -7,6 +7,11 @@ services:
     command: pnpm --filter @paymentops/api dev
     environment:
       API_PORT: 3000
+      AUTH_MODE: development
+      AUTH0_DOMAIN: ${AUTH0_DOMAIN:-paymentops-dev.us.auth0.com}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://api.paymentops.local}
+      AUTH0_ROLE_CLAIM: ${AUTH0_ROLE_CLAIM:-https://paymentops.local/roles}
+      PAYMENTOPS_DEV_ADMIN_TOKEN: ${PAYMENTOPS_DEV_ADMIN_TOKEN:-dev-admin-token}
       DATABASE_URL: sqlserver://sa:${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}@mssql:1433;database=paymentops;encrypt=false;trustServerCertificate=true
       REDIS_URL: redis://redis:6379
       REDPANDA_BROKERS: redpanda:9092
@@ -51,6 +56,7 @@ services:
     command: pnpm --filter @paymentops/web dev --host 0.0.0.0 --port 3001
     environment:
       NUXT_PUBLIC_API_BASE_URL: http://localhost:3000
+      NUXT_PUBLIC_DEV_ADMIN_TOKEN: ${PAYMENTOPS_DEV_ADMIN_TOKEN:-dev-admin-token}
     ports:
       - "3001:3001"
     depends_on:
