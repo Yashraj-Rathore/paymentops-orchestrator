@@ -1,5 +1,6 @@
-﻿import { Module } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 
+import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { DatabaseModule } from "./database/database.module.js";
 import { HealthController } from "./health.controller.js";
@@ -12,6 +13,7 @@ import { WebhookDeliveriesModule } from "./webhook-deliveries/webhook-deliveries
   imports: [
     DatabaseModule,
     AuthModule,
+    ApprovalsModule,
     OperationsModule,
     PayoutsModule,
     ProviderCallbacksModule,

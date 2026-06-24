@@ -35,7 +35,13 @@ export interface AuthSessionResponse {
   apiKeyId: string | null;
 }
 
-export type PayoutStatus = "queued" | "processing" | "paid" | "failed" | "canceled" | "needs_approval";
+export type PayoutStatus =
+  | "queued"
+  | "processing"
+  | "paid"
+  | "failed"
+  | "canceled"
+  | "needs_approval";
 
 export interface PayoutSummary {
   id: string;
@@ -99,6 +105,47 @@ export interface CreatePayoutResponse extends PayoutDetailsResponse {
   replayed: boolean;
 }
 
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export type RiskRuleType = "amount_threshold" | "blocked_destination";
+
+export type RiskRuleAction = "require_approval";
+
+export interface RiskRuleSummary {
+  id: string;
+  name: string;
+  type: RiskRuleType;
+  action: RiskRuleAction;
+  status: "active" | "disabled";
+  amountMinor: number | null;
+  currency: string | null;
+  destinationAccount: string | null;
+  createdAt: string;
+}
+
+export interface PayoutApprovalSummary {
+  id: string;
+  payoutId: string;
+  tenantId: string;
+  status: ApprovalStatus;
+  riskRuleId: string | null;
+  riskReason: string;
+  amountMinor: number;
+  currency: string;
+  destinationAccount: string;
+  requestedAt: string;
+  decidedAt: string | null;
+  decidedBy: string | null;
+}
+
+export interface ApprovalDecisionRequest {
+  reason?: string | null;
+}
+
+export interface ApprovalDecisionResponse extends PayoutApprovalSummary {
+  payout: PayoutSummary;
+}
+
 export interface ProviderPayoutRequest {
   payoutId: string;
   tenantId: string;
@@ -128,7 +175,9 @@ export interface ProviderPayoutCallbackResponse {
   accepted: boolean;
 }
 
-export interface MerchantWebhookEnvelope<TPayload extends Record<string, unknown> = Record<string, unknown>> {
+export interface MerchantWebhookEnvelope<
+  TPayload extends Record<string, unknown> = Record<string, unknown>
+> {
   id: string;
   type: string;
   tenantId: string;
@@ -226,6 +275,8 @@ export interface TenantDashboardResponse {
   apiKeys: ApiKeySummary[];
   webhookEndpoints: WebhookEndpointSummary[];
   webhookDeliveries: WebhookDeliverySummary[];
+  riskRules: RiskRuleSummary[];
+  approvals: PayoutApprovalSummary[];
   payouts: PayoutSummary[];
   ledgerEntries: LedgerEntrySummary[];
   outboxEvents: OutboxEventSummary[];
@@ -237,6 +288,8 @@ export interface TenantDashboardResponse {
     webhookEndpoints: number;
     webhookDeliveries: number;
     failedWebhookDeliveries: number;
+    riskRules: number;
+    pendingApprovals: number;
     payouts: number;
     ledgerEntries: number;
     pendingOutboxEvents: number;

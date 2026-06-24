@@ -2,7 +2,7 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, append-only ledger entries, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation, persistence, identity, payout-core, and webhook-delivery baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, and a usable dashboard shell.
+The current milestone is a foundation, persistence, identity, payout-core, risk-approval, and webhook-delivery baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, and a usable dashboard shell.
 
 ## Workspace
 
@@ -141,6 +141,11 @@ Each accepted payout creates:
 - one `payout.created.v1` outbox event
 - one audit log entry
 
+## Risk And Approval Workflow
+
+The demo tenant seeds a high-value payout rule: USD payouts at or above 100000 minor units require approval. Matching payouts are created as `needs_approval`, get a `payout_approvals` row, and emit `payout.approval_requested.v1` instead of going directly to provider dispatch.
+
+Operations users can approve or reject from the dashboard. Approving records the decision, moves the payout to `queued`, emits `payout.approved.v1`, and enqueues `payout.created.v1` so the existing worker dispatch path handles provider submission. Rejecting records the decision, moves the payout to `canceled`, and emits `payout.rejected.v1`.
 
 ## Async Dispatch Baseline
 

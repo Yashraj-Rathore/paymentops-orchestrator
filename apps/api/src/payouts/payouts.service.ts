@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
+﻿import { BadRequestException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import type {
   CreatePayoutRequest,
   CreatePayoutResponse,
@@ -11,7 +11,6 @@ import type { AuthenticatedPrincipal } from "../auth/auth.types.js";
 import { PayoutsRepository } from "./payouts.repository.js";
 
 const idempotencyKeyMaxLength = 128;
-const defaultPayoutStatus = "queued";
 
 @Injectable()
 export class PayoutsService {
@@ -37,13 +36,15 @@ export class PayoutsService {
       destinationAccount: normalized.destinationAccount,
       reference: normalized.reference,
       description: normalized.description,
-      status: defaultPayoutStatus,
       apiClientExternalId: principal?.apiClientId ?? null,
       apiKeyExternalId: principal?.apiKeyId ?? null
     });
   }
 
-  async listPayouts(tenantId: string, principal?: AuthenticatedPrincipal): Promise<PayoutSummary[]> {
+  async listPayouts(
+    tenantId: string,
+    principal?: AuthenticatedPrincipal
+  ): Promise<PayoutSummary[]> {
     assertTenantAccess(tenantId, principal);
     return this.repository.listPayouts(tenantId);
   }
@@ -76,7 +77,9 @@ function normalizeIdempotencyKey(value: string | undefined): string {
   }
 
   if (key.length > idempotencyKeyMaxLength) {
-    throw new BadRequestException(`Idempotency-Key must be ${idempotencyKeyMaxLength} characters or less`);
+    throw new BadRequestException(
+      `Idempotency-Key must be ${idempotencyKeyMaxLength} characters or less`
+    );
   }
 
   return key;

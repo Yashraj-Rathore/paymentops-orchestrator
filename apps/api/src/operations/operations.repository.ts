@@ -1,4 +1,4 @@
-﻿import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type {
   ApiClientSummary,
   ApiKeySummary,
@@ -6,6 +6,8 @@ import type {
   CreateWebhookEndpointResponse,
   LedgerEntrySummary,
   OutboxEventSummary,
+  PayoutApprovalSummary,
+  RiskRuleSummary,
   PayoutSummary,
   TenantDashboardResponse,
   TenantSummary,
@@ -122,6 +124,32 @@ interface OutboxEventRow {
   created_at: Date;
 }
 
+interface RiskRuleRow {
+  external_id: string;
+  name: string;
+  rule_type: RiskRuleSummary["type"];
+  action: RiskRuleSummary["action"];
+  amount_minor: number | string | null;
+  currency: string | null;
+  destination_account: string | null;
+  status: RiskRuleSummary["status"];
+  created_at: Date;
+}
+
+interface ApprovalQueueRow {
+  approval_external_id: string;
+  payout_external_id: string;
+  risk_rule_external_id: string | null;
+  risk_reason: string;
+  approval_status: PayoutApprovalSummary["status"];
+  amount_minor: number | string;
+  currency: string;
+  destination_account: string;
+  requested_at: Date;
+  decided_at: Date | null;
+  decided_by_actor_id: string | null;
+}
+
 export interface ApiKeyCreateResult extends ApiKeySummary {
   secret: string;
 }
@@ -130,7 +158,11 @@ export interface ApiKeyCreateResult extends ApiKeySummary {
 export class OperationsRepository {
   constructor(@Inject(DatabaseService) private readonly database: DatabaseService) {}
 
-  async createTenant(input: { externalId: string; name: string; ownerEmail: string }): Promise<TenantSummary> {
+  async createTenant(input: {
+    externalId: string;
+    name: string;
+    ownerEmail: string;
+  }): Promise<TenantSummary> {
     const pool = await this.database.connect();
     const transaction = new sql.Transaction(pool);
     await transaction.begin();
@@ -138,8 +170,7 @@ export class OperationsRepository {
     try {
       const tenant = await new sql.Request(transaction)
         .input("externalId", sql.NVarChar(64), input.externalId)
-        .input("name", sql.NVarChar(200), input.name)
-        .query<TenantRow>(`
+        .input("name", sql.NVarChar(200), input.name).query<TenantRow>(`
 INSERT INTO dbo.tenants (external_id, name)
 OUTPUT inserted.id, inserted.external_id, inserted.name, inserted.status, inserted.created_at
 VALUES (@externalId, @name);
@@ -150,8 +181,7 @@ VALUES (@externalId, @name);
       await new sql.Request(transaction)
         .input("tenantId", sql.UniqueIdentifier, tenantId)
         .input("email", sql.NVarChar(256), input.ownerEmail)
-        .input("role", sql.NVarChar(64), "merchant_owner")
-        .query(`
+        .input("role", sql.NVarChar(64), "merchant_owner").query(`
 INSERT INTO dbo.user_memberships (tenant_id, user_email, role)
 VALUES (@tenantId, @email, @role);
 `);
@@ -201,8 +231,7 @@ VALUES (@tenantId, @email, @role);
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenant.id)
       .input("externalId", sql.NVarChar(64), input.externalId)
-      .input("name", sql.NVarChar(200), input.name)
-      .query<ApiClientRow>(`
+      .input("name", sql.NVarChar(200), input.name).query<ApiClientRow>(`
 INSERT INTO dbo.api_clients (tenant_id, external_id, name)
 OUTPUT inserted.id, inserted.external_id, inserted.name, inserted.status, inserted.created_at
 VALUES (@tenantId, @externalId, @name);
@@ -338,9 +367,7 @@ VALUES (@tenantId, @externalId, @url, @description, @secretHash, @signingSecret,
     const tenant = await this.requireTenant(tenantExternalId);
     const pool = await this.database.connect();
 
-    const memberships = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const memberships = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<MembershipRow>(`
 SELECT id, user_email, role, status, created_at
 FROM dbo.user_memberships
@@ -348,9 +375,7 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
-    const apiClients = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const apiClients = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<ApiClientRow>(`
 SELECT id, external_id, name, status, created_at
 FROM dbo.api_clients
@@ -358,9 +383,7 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
-    const apiKeys = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const apiKeys = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<ApiKeyRow>(`
 SELECT id, external_id, name, key_prefix, permissions_json, expires_at, created_at
 FROM dbo.api_keys
@@ -368,9 +391,7 @@ WHERE tenant_id = @tenantId AND revoked_at IS NULL
 ORDER BY created_at DESC;
 `);
 
-    const webhooks = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const webhooks = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<WebhookEndpointRow>(`
 SELECT id, external_id, url, description, event_subscriptions_json, status, created_at
 FROM dbo.webhook_endpoints
@@ -378,9 +399,7 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
-    const auditLogs = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const auditLogs = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<AuditLogRow>(`
 SELECT TOP 10 id, actor_type, actor_id, action, resource_type, resource_id, created_at
 FROM dbo.audit_logs
@@ -388,9 +407,7 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
-    const payouts = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const payouts = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<PayoutRow>(`
 SELECT TOP 10 external_id, provider_payout_id, amount_minor, currency, destination_account, reference, description, status, created_at, updated_at
 FROM dbo.payouts
@@ -398,9 +415,7 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
-    const ledgerEntries = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const ledgerEntries = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<LedgerEntryRow>(`
 SELECT TOP 10
   ledger_entries.id,
@@ -417,9 +432,7 @@ WHERE ledger_entries.tenant_id = @tenantId
 ORDER BY ledger_entries.created_at DESC, ledger_entries.id DESC;
 `);
 
-    const outboxEvents = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const outboxEvents = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<OutboxEventRow>(`
 SELECT TOP 10 id, event_type, aggregate_type, aggregate_id, status, attempts, created_at
 FROM dbo.outbox_events
@@ -429,8 +442,7 @@ ORDER BY created_at DESC;
 
     const webhookDeliveries = await pool
       .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
-      .query<WebhookDeliveryRow>(`
+      .input("tenantId", sql.UniqueIdentifier, tenant.id).query<WebhookDeliveryRow>(`
 SELECT TOP 10
   webhook_deliveries.external_id,
   webhook_endpoints.external_id AS webhook_endpoint_external_id,
@@ -452,6 +464,35 @@ WHERE webhook_deliveries.tenant_id = @tenantId
 ORDER BY webhook_deliveries.created_at DESC;
 `);
 
+    const riskRules = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<RiskRuleRow>(`
+SELECT TOP 10 external_id, name, rule_type, action, amount_minor, currency, destination_account, status, created_at
+FROM dbo.risk_rules
+WHERE tenant_id = @tenantId
+ORDER BY created_at DESC;
+`);
+
+    const approvals = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<ApprovalQueueRow>(`
+SELECT TOP 10
+  payout_approvals.external_id AS approval_external_id,
+  payouts.external_id AS payout_external_id,
+  risk_rules.external_id AS risk_rule_external_id,
+  payout_approvals.risk_reason,
+  payout_approvals.status AS approval_status,
+  payouts.amount_minor,
+  payouts.currency,
+  payouts.destination_account,
+  payout_approvals.created_at AS requested_at,
+  payout_approvals.decided_at,
+  payout_approvals.decided_by_actor_id
+FROM dbo.payout_approvals
+INNER JOIN dbo.payouts ON payouts.id = payout_approvals.payout_id
+LEFT JOIN dbo.risk_rules ON risk_rules.id = payout_approvals.risk_rule_id
+WHERE payout_approvals.tenant_id = @tenantId
+ORDER BY CASE WHEN payout_approvals.status = N'pending' THEN 0 ELSE 1 END, payout_approvals.created_at DESC;
+`);
+
     return {
       tenant: mapTenant(tenant),
       memberships: memberships.recordset.map(mapMembership),
@@ -459,6 +500,8 @@ ORDER BY webhook_deliveries.created_at DESC;
       apiKeys: apiKeys.recordset.map(mapApiKey),
       webhookEndpoints: webhooks.recordset.map(mapWebhookEndpoint),
       webhookDeliveries: webhookDeliveries.recordset.map(mapWebhookDelivery),
+      riskRules: riskRules.recordset.map(mapRiskRule),
+      approvals: approvals.recordset.map((row) => mapApproval(row, tenant.external_id)),
       payouts: payouts.recordset.map((row) => mapPayout(row, tenant.external_id)),
       ledgerEntries: ledgerEntries.recordset.map(mapLedgerEntry),
       outboxEvents: outboxEvents.recordset.map(mapOutboxEvent),
@@ -472,9 +515,14 @@ ORDER BY webhook_deliveries.created_at DESC;
         failedWebhookDeliveries: webhookDeliveries.recordset.filter(
           (delivery) => delivery.status === "failed" || delivery.status === "dead_letter"
         ).length,
+        riskRules: riskRules.recordset.length,
+        pendingApprovals: approvals.recordset.filter(
+          (approval) => approval.approval_status === "pending"
+        ).length,
         payouts: payouts.recordset.length,
         ledgerEntries: ledgerEntries.recordset.length,
-        pendingOutboxEvents: outboxEvents.recordset.filter((event) => event.status === "pending").length,
+        pendingOutboxEvents: outboxEvents.recordset.filter((event) => event.status === "pending")
+          .length,
         auditEvents: auditLogs.recordset.length
       }
     };
@@ -482,9 +530,7 @@ ORDER BY webhook_deliveries.created_at DESC;
 
   async findTenantByExternalId(externalId: string): Promise<TenantRow | null> {
     const pool = await this.database.connect();
-    const result = await pool
-      .request()
-      .input("externalId", sql.NVarChar(64), externalId)
+    const result = await pool.request().input("externalId", sql.NVarChar(64), externalId)
       .query<TenantRow>(`
 SELECT id, external_id, name, status, created_at
 FROM dbo.tenants
@@ -513,6 +559,11 @@ WHERE external_id = @externalId;
       await this.insertSeedApiKey(tenant.id);
     }
 
+    const riskRule = await this.findRiskRule(tenant.id, "risk_demo_high_value");
+    if (!riskRule) {
+      await this.insertSeedRiskRule(tenant.id);
+    }
+
     const webhook = await this.findWebhookEndpoint(tenant.id, "whk_demo_ops");
     if (!webhook) {
       await this.createWebhookEndpoint({
@@ -522,7 +573,12 @@ WHERE external_id = @externalId;
         description: "Demo operations webhook endpoint",
         secretHash: "seeded-webhook-secret-hash",
         signingSecret: "whsec_demo_northstar",
-        eventSubscriptions: ["payout.created.v1", "payout.processing.v1", "payout.paid.v1", "payout.failed.v1"]
+        eventSubscriptions: [
+          "payout.created.v1",
+          "payout.processing.v1",
+          "payout.paid.v1",
+          "payout.failed.v1"
+        ]
       });
     }
   }
@@ -543,8 +599,7 @@ WHERE external_id = @externalId;
         "permissionsJson",
         sql.NVarChar(sql.MAX),
         JSON.stringify(["payouts:create", "payouts:read", "webhooks:manage"])
-      )
-      .query(`
+      ).query(`
 INSERT INTO dbo.api_keys (
   tenant_id,
   api_client_id,
@@ -566,6 +621,36 @@ VALUES (@tenantId, @apiClientId, @externalId, @name, @keyHash, @keyPrefix, @perm
     });
   }
 
+  private async insertSeedRiskRule(tenantId: string): Promise<void> {
+    const pool = await this.database.connect();
+
+    await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenantId)
+      .input("externalId", sql.NVarChar(64), "risk_demo_high_value")
+      .input("name", sql.NVarChar(200), "High-value payout review")
+      .input("amountMinor", sql.BigInt, 100000)
+      .input("currency", sql.Char(3), "USD").query(`
+INSERT INTO dbo.risk_rules (
+  tenant_id,
+  external_id,
+  name,
+  rule_type,
+  action,
+  amount_minor,
+  currency
+)
+VALUES (@tenantId, @externalId, @name, N'amount_threshold', N'require_approval', @amountMinor, @currency);
+`);
+
+    await this.writeAuditLog({
+      tenantId,
+      action: "risk_rule.seeded",
+      resourceType: "risk_rule",
+      resourceId: "risk_demo_high_value",
+      metadata: { threshold: 100000, currency: "USD" }
+    });
+  }
   private async requireTenant(externalId: string): Promise<TenantRow> {
     const tenant = await this.findTenantByExternalId(externalId);
 
@@ -578,10 +663,7 @@ VALUES (@tenantId, @apiClientId, @externalId, @name, @keyHash, @keyPrefix, @perm
 
   private async requireTenantById(id: string): Promise<TenantRow> {
     const pool = await this.database.connect();
-    const result = await pool
-      .request()
-      .input("id", sql.UniqueIdentifier, id)
-      .query<TenantRow>(`
+    const result = await pool.request().input("id", sql.UniqueIdentifier, id).query<TenantRow>(`
 SELECT id, external_id, name, status, created_at
 FROM dbo.tenants
 WHERE id = @id;
@@ -611,8 +693,7 @@ WHERE id = @id;
     const result = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenantId)
-      .input("externalId", sql.NVarChar(64), externalId)
-      .query<ApiClientRow>(`
+      .input("externalId", sql.NVarChar(64), externalId).query<ApiClientRow>(`
 SELECT id, external_id, name, status, created_at
 FROM dbo.api_clients
 WHERE tenant_id = @tenantId AND external_id = @externalId;
@@ -626,8 +707,7 @@ WHERE tenant_id = @tenantId AND external_id = @externalId;
     const result = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenantId)
-      .input("externalId", sql.NVarChar(64), externalId)
-      .query<ApiKeyRow>(`
+      .input("externalId", sql.NVarChar(64), externalId).query<ApiKeyRow>(`
 SELECT id, external_id, name, key_prefix, permissions_json, expires_at, created_at
 FROM dbo.api_keys
 WHERE tenant_id = @tenantId AND external_id = @externalId;
@@ -644,8 +724,7 @@ WHERE tenant_id = @tenantId AND external_id = @externalId;
     const result = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenantId)
-      .input("externalId", sql.NVarChar(64), externalId)
-      .query<WebhookEndpointRow>(`
+      .input("externalId", sql.NVarChar(64), externalId).query<WebhookEndpointRow>(`
 SELECT id, external_id, url, description, event_subscriptions_json, status, created_at
 FROM dbo.webhook_endpoints
 WHERE tenant_id = @tenantId AND external_id = @externalId;
@@ -654,6 +733,19 @@ WHERE tenant_id = @tenantId AND external_id = @externalId;
     return result.recordset[0] ?? null;
   }
 
+  private async findRiskRule(tenantId: string, externalId: string): Promise<RiskRuleRow | null> {
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenantId)
+      .input("externalId", sql.NVarChar(64), externalId).query<RiskRuleRow>(`
+SELECT external_id, name, rule_type, action, amount_minor, currency, destination_account, status, created_at
+FROM dbo.risk_rules
+WHERE tenant_id = @tenantId AND external_id = @externalId;
+`);
+
+    return result.recordset[0] ?? null;
+  }
   private async writeAuditLog(input: {
     tenantId: string;
     action: string;
@@ -685,8 +777,7 @@ async function insertAuditLog(
     .input("action", sql.NVarChar(128), input.action)
     .input("resourceType", sql.NVarChar(128), input.resourceType)
     .input("resourceId", sql.NVarChar(128), input.resourceId)
-    .input("metadataJson", sql.NVarChar(sql.MAX), JSON.stringify(input.metadata))
-    .query(`
+    .input("metadataJson", sql.NVarChar(sql.MAX), JSON.stringify(input.metadata)).query(`
 INSERT INTO dbo.audit_logs (
   tenant_id,
   actor_type,
@@ -766,6 +857,37 @@ function mapWebhookDelivery(row: WebhookDeliveryRow): WebhookDeliverySummary {
     lastStatusCode: row.last_status_code,
     lastError: row.last_error,
     createdAt: row.created_at.toISOString()
+  };
+}
+
+function mapRiskRule(row: RiskRuleRow): RiskRuleSummary {
+  return {
+    id: row.external_id,
+    name: row.name,
+    type: row.rule_type,
+    action: row.action,
+    status: row.status,
+    amountMinor: row.amount_minor === null ? null : Number(row.amount_minor),
+    currency: row.currency?.trim() ?? null,
+    destinationAccount: row.destination_account,
+    createdAt: row.created_at.toISOString()
+  };
+}
+
+function mapApproval(row: ApprovalQueueRow, tenantExternalId: string): PayoutApprovalSummary {
+  return {
+    id: row.approval_external_id,
+    payoutId: row.payout_external_id,
+    tenantId: tenantExternalId,
+    status: row.approval_status,
+    riskRuleId: row.risk_rule_external_id,
+    riskReason: row.risk_reason,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency.trim(),
+    destinationAccount: row.destination_account,
+    requestedAt: row.requested_at.toISOString(),
+    decidedAt: row.decided_at?.toISOString() ?? null,
+    decidedBy: row.decided_by_actor_id
   };
 }
 

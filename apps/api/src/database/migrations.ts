@@ -118,8 +118,7 @@ BEGIN
   CREATE INDEX ix_audit_logs_tenant_created_at ON dbo.audit_logs (tenant_id, created_at DESC);
 END;
 `
-  }
-,
+  },
   {
     version: "002",
     name: "payout_core",
@@ -232,8 +231,7 @@ BEGIN
   CREATE INDEX ix_outbox_events_tenant_created_at ON dbo.outbox_events (tenant_id, created_at DESC);
 END;
 `
-  }
-,
+  },
   {
     version: "003",
     name: "async_payout_dispatch",
@@ -320,6 +318,63 @@ BEGIN
   );
 
   CREATE INDEX ix_webhook_delivery_attempts_delivery ON dbo.webhook_delivery_attempts (webhook_delivery_id, attempt_number DESC);
+END;
+`
+  },
+  {
+    version: "005",
+    name: "risk_and_approval_workflow",
+    sql: `
+IF OBJECT_ID(N'dbo.risk_rules', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.risk_rules (
+    id UNIQUEIDENTIFIER NOT NULL CONSTRAINT pk_risk_rules PRIMARY KEY DEFAULT NEWID(),
+    tenant_id UNIQUEIDENTIFIER NULL,
+    external_id NVARCHAR(64) NOT NULL CONSTRAINT uq_risk_rules_external_id UNIQUE,
+    name NVARCHAR(200) NOT NULL,
+    rule_type NVARCHAR(64) NOT NULL,
+    action NVARCHAR(64) NOT NULL CONSTRAINT df_risk_rules_action DEFAULT N'require_approval',
+    amount_minor BIGINT NULL,
+    currency CHAR(3) NULL,
+    destination_account NVARCHAR(256) NULL,
+    status NVARCHAR(32) NOT NULL CONSTRAINT df_risk_rules_status DEFAULT N'active',
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_risk_rules_created_at DEFAULT SYSUTCDATETIME(),
+    updated_at DATETIME2(3) NOT NULL CONSTRAINT df_risk_rules_updated_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT fk_risk_rules_tenant FOREIGN KEY (tenant_id) REFERENCES dbo.tenants(id),
+    CONSTRAINT ck_risk_rules_type CHECK (rule_type IN (N'amount_threshold', N'blocked_destination')),
+    CONSTRAINT ck_risk_rules_action CHECK (action IN (N'require_approval')),
+    CONSTRAINT ck_risk_rules_status CHECK (status IN (N'active', N'disabled')),
+    CONSTRAINT ck_risk_rules_currency CHECK (currency IS NULL OR currency LIKE '[A-Z][A-Z][A-Z]'),
+    CONSTRAINT ck_risk_rules_amount_positive CHECK (amount_minor IS NULL OR amount_minor > 0)
+  );
+
+  CREATE INDEX ix_risk_rules_tenant_status ON dbo.risk_rules (tenant_id, status, created_at DESC);
+END;
+
+IF OBJECT_ID(N'dbo.payout_approvals', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.payout_approvals (
+    id UNIQUEIDENTIFIER NOT NULL CONSTRAINT pk_payout_approvals PRIMARY KEY DEFAULT NEWID(),
+    tenant_id UNIQUEIDENTIFIER NOT NULL,
+    payout_id UNIQUEIDENTIFIER NOT NULL,
+    risk_rule_id UNIQUEIDENTIFIER NULL,
+    external_id NVARCHAR(64) NOT NULL CONSTRAINT uq_payout_approvals_external_id UNIQUE,
+    status NVARCHAR(32) NOT NULL CONSTRAINT df_payout_approvals_status DEFAULT N'pending',
+    risk_reason NVARCHAR(500) NOT NULL,
+    decided_by_actor_type NVARCHAR(64) NULL,
+    decided_by_actor_id NVARCHAR(256) NULL,
+    decision_reason NVARCHAR(500) NULL,
+    decided_at DATETIME2(3) NULL,
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_payout_approvals_created_at DEFAULT SYSUTCDATETIME(),
+    updated_at DATETIME2(3) NOT NULL CONSTRAINT df_payout_approvals_updated_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT fk_payout_approvals_tenant FOREIGN KEY (tenant_id) REFERENCES dbo.tenants(id),
+    CONSTRAINT fk_payout_approvals_payout FOREIGN KEY (payout_id) REFERENCES dbo.payouts(id),
+    CONSTRAINT fk_payout_approvals_risk_rule FOREIGN KEY (risk_rule_id) REFERENCES dbo.risk_rules(id),
+    CONSTRAINT uq_payout_approvals_payout UNIQUE (payout_id),
+    CONSTRAINT ck_payout_approvals_status CHECK (status IN (N'pending', N'approved', N'rejected'))
+  );
+
+  CREATE INDEX ix_payout_approvals_tenant_status ON dbo.payout_approvals (tenant_id, status, created_at DESC);
 END;
 `
   }

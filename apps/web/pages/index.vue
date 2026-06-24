@@ -38,7 +38,7 @@ const webhookForm = reactive({
   eventSubscriptions: "payout.created.v1, payout.processing.v1, payout.paid.v1, payout.failed.v1"
 });
 const payoutForm = reactive({
-  amountMinor: 12500,
+  amountMinor: 125000,
   currency: "USD",
   destinationAccount: "acct_demo_merchant_bank",
   reference: "",
@@ -62,14 +62,11 @@ watch(
   { immediate: true }
 );
 
-watch(
-  revealedApiKeySecret,
-  (secret) => {
-    if (secret) {
-      payoutForm.apiKeySecret = secret;
-    }
+watch(revealedApiKeySecret, (secret) => {
+  if (secret) {
+    payoutForm.apiKeySecret = secret;
   }
-);
+});
 
 const lanes = computed(() => [
   {
@@ -91,6 +88,11 @@ const lanes = computed(() => [
     label: "Payouts",
     value: String(dashboard.value?.metrics.payouts ?? 0),
     state: "idempotent"
+  },
+  {
+    label: "Approvals",
+    value: String(dashboard.value?.metrics.pendingApprovals ?? 0),
+    state: "pending review"
   },
   {
     label: "Ledger",
@@ -190,6 +192,24 @@ async function copyWebhookSecret() {
   }
 }
 
+async function approvePayout(payoutId: string) {
+  await store.approvePayout(
+    apiBaseUrl,
+    devAdminToken,
+    payoutId,
+    "Approved from the operations dashboard"
+  );
+}
+
+async function rejectPayout(payoutId: string) {
+  await store.rejectPayout(
+    apiBaseUrl,
+    devAdminToken,
+    payoutId,
+    "Rejected from the operations dashboard"
+  );
+}
+
 async function replayWebhookDelivery(deliveryId: string) {
   await store.replayWebhookDelivery(apiBaseUrl, devAdminToken, deliveryId);
 }
@@ -280,6 +300,16 @@ function newIdempotencyKey(): string {
           <small>Idempotent creates</small>
         </article>
         <article class="metric">
+          <span>Pending approvals</span>
+          <strong>{{ dashboard?.metrics.pendingApprovals ?? 0 }}</strong>
+          <small>Risk-gated payouts</small>
+        </article>
+        <article class="metric">
+          <span>Risk rules</span>
+          <strong>{{ dashboard?.metrics.riskRules ?? 0 }}</strong>
+          <small>Active controls</small>
+        </article>
+        <article class="metric">
           <span>Ledger entries</span>
           <strong>{{ dashboard?.metrics.ledgerEntries ?? 0 }}</strong>
           <small>Append-only accounting</small>
@@ -332,7 +362,9 @@ function newIdempotencyKey(): string {
             <span>Name</span>
             <input v-model="clientForm.name" required type="text" placeholder="Checkout Service">
           </label>
-          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Create</button>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">
+            Create
+          </button>
         </form>
 
         <form class="panel form-panel" @submit.prevent="submitApiKey">
@@ -341,7 +373,12 @@ function newIdempotencyKey(): string {
           </header>
           <label>
             <span>Name</span>
-            <input v-model="apiKeyForm.name" required type="text" placeholder="Production checkout key">
+            <input
+              v-model="apiKeyForm.name"
+              required
+              type="text"
+              placeholder="Production checkout key"
+            >
           </label>
           <label>
             <span>API client</span>
@@ -356,7 +393,9 @@ function newIdempotencyKey(): string {
             <span>Permissions</span>
             <input v-model="apiKeyForm.permissions" required type="text">
           </label>
-          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Mint</button>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">
+            Mint
+          </button>
         </form>
 
         <form id="payouts" class="panel form-panel" @submit.prevent="submitPayout">
@@ -365,11 +404,22 @@ function newIdempotencyKey(): string {
           </header>
           <label>
             <span>API key secret</span>
-            <input v-model="payoutForm.apiKeySecret" required type="password" placeholder="pops_sk_test_...">
+            <input
+              v-model="payoutForm.apiKeySecret"
+              required
+              type="password"
+              placeholder="pops_sk_test_..."
+            >
           </label>
           <label>
             <span>Amount minor</span>
-            <input v-model.number="payoutForm.amountMinor" required min="1" step="1" type="number">
+            <input
+              v-model.number="payoutForm.amountMinor"
+              required
+              min="1"
+              step="1"
+              type="number"
+            >
           </label>
           <label>
             <span>Currency</span>
@@ -387,7 +437,9 @@ function newIdempotencyKey(): string {
             <span>Idempotency key</span>
             <input v-model="payoutForm.idempotencyKey" required type="text">
           </label>
-          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Create</button>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">
+            Create
+          </button>
         </form>
 
         <form id="webhooks" class="panel form-panel" @submit.prevent="submitWebhook">
@@ -396,7 +448,12 @@ function newIdempotencyKey(): string {
           </header>
           <label>
             <span>URL</span>
-            <input v-model="webhookForm.url" required type="url" placeholder="https://example.com/paymentops">
+            <input
+              v-model="webhookForm.url"
+              required
+              type="url"
+              placeholder="https://example.com/paymentops"
+            >
           </label>
           <label>
             <span>Description</span>
@@ -406,7 +463,9 @@ function newIdempotencyKey(): string {
             <span>Events</span>
             <input v-model="webhookForm.eventSubscriptions" required type="text">
           </label>
-          <button class="primary-button" :disabled="saving || !dashboard" type="submit">Register</button>
+          <button class="primary-button" :disabled="saving || !dashboard" type="submit">
+            Register
+          </button>
         </form>
       </section>
 
@@ -417,25 +476,34 @@ function newIdempotencyKey(): string {
         </div>
         <div class="button-row">
           <button class="secondary-button" type="button" @click="copyApiKeySecret">Copy</button>
-          <button class="secondary-button" type="button" @click="store.clearApiKeySecret()">Dismiss</button>
+          <button class="secondary-button" type="button" @click="store.clearApiKeySecret()">
+            Dismiss
+          </button>
         </div>
       </section>
 
-      <section v-if="revealedWebhookSecret" class="secret-reveal" aria-label="Webhook signing secret">
+      <section
+        v-if="revealedWebhookSecret"
+        class="secret-reveal"
+        aria-label="Webhook signing secret"
+      >
         <div>
           <span>Webhook signing secret</span>
           <code>{{ revealedWebhookSecret }}</code>
         </div>
         <div class="button-row">
           <button class="secondary-button" type="button" @click="copyWebhookSecret">Copy</button>
-          <button class="secondary-button" type="button" @click="store.clearWebhookSecret()">Dismiss</button>
+          <button class="secondary-button" type="button" @click="store.clearWebhookSecret()">
+            Dismiss
+          </button>
         </div>
       </section>
 
       <section v-if="lastCreatedPayout" class="secret-reveal" aria-label="Created payout">
         <div>
           <span>Payout accepted</span>
-          <code>{{ lastCreatedPayout.id }} / {{ lastCreatedPayout.status }} / {{ lastCreatedPayout.idempotencyKey }}</code>
+          <code>{{ lastCreatedPayout.id }} / {{ lastCreatedPayout.status }} /
+            {{ lastCreatedPayout.idempotencyKey }}</code>
         </div>
       </section>
 
@@ -466,6 +534,54 @@ function newIdempotencyKey(): string {
           </div>
         </article>
 
+        <article class="panel">
+          <header>
+            <h2>Risk Rules</h2>
+          </header>
+          <div v-for="rule in dashboard?.riskRules" :key="rule.id" class="row-item">
+            <div>
+              <strong>{{ rule.name }}</strong>
+              <span v-if="rule.amountMinor">{{ formatMinor(rule.amountMinor, rule.currency ?? "USD") }} threshold</span>
+              <span v-else>{{ rule.destinationAccount ?? rule.type }}</span>
+            </div>
+            <small>{{ rule.status }}</small>
+          </div>
+        </article>
+
+        <article id="approvals" class="panel wide">
+          <header>
+            <h2>Approval Queue</h2>
+          </header>
+          <div v-for="approval in dashboard?.approvals" :key="approval.id" class="row-item">
+            <div>
+              <strong>{{ formatMinor(approval.amountMinor, approval.currency) }}</strong>
+              <span>{{ approval.payoutId }} / {{ approval.destinationAccount }}</span>
+              <span>{{ approval.riskReason }}</span>
+            </div>
+            <div class="row-actions">
+              <small>{{ approval.status }}</small>
+              <button
+                v-if="approval.status === 'pending'"
+                class="secondary-button compact-button"
+                type="button"
+                :disabled="saving"
+                @click="approvePayout(approval.payoutId)"
+              >
+                Approve
+              </button>
+              <button
+                v-if="approval.status === 'pending'"
+                class="secondary-button compact-button"
+                type="button"
+                :disabled="saving"
+                @click="rejectPayout(approval.payoutId)"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </article>
+
         <article class="panel wide">
           <header>
             <h2>Recent Payouts</h2>
@@ -473,7 +589,8 @@ function newIdempotencyKey(): string {
           <div v-for="payout in dashboard?.payouts" :key="payout.id" class="row-item">
             <div>
               <strong>{{ formatMinor(payout.amountMinor, payout.currency) }}</strong>
-              <span>{{ payout.id }} / {{ payout.destinationAccount }} / {{ payout.providerPayoutId ?? "not dispatched" }}</span>
+              <span>{{ payout.id }} / {{ payout.destinationAccount }} /
+                {{ payout.providerPayoutId ?? "not dispatched" }}</span>
             </div>
             <small>{{ payout.status }}</small>
           </div>
@@ -525,7 +642,8 @@ function newIdempotencyKey(): string {
           <div v-for="delivery in dashboard?.webhookDeliveries" :key="delivery.id" class="row-item">
             <div>
               <strong>{{ delivery.eventType }}</strong>
-              <span>{{ delivery.webhookEndpointId }} / {{ delivery.aggregateId }} / attempts {{ delivery.attempts }}</span>
+              <span>{{ delivery.webhookEndpointId }} / {{ delivery.aggregateId }} / attempts
+                {{ delivery.attempts }}</span>
               <span v-if="delivery.lastError">{{ delivery.lastError }}</span>
             </div>
             <div class="row-actions">

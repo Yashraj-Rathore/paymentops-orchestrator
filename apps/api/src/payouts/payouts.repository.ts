@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+﻿import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type {
   CreatePayoutResponse,
   LedgerEntrySummary,
@@ -65,6 +65,23 @@ interface IdempotencyRow {
   response_json: string;
 }
 
+interface RiskRuleRow {
+  id: string;
+  external_id: string;
+  name: string;
+  rule_type: "amount_threshold" | "blocked_destination";
+  action: "require_approval";
+  amount_minor: number | string | null;
+  currency: string | null;
+  destination_account: string | null;
+}
+
+interface RiskMatch {
+  ruleId: string;
+  ruleExternalId: string;
+  reason: string;
+}
+
 export interface CreatePayoutInput {
   tenantExternalId: string;
   externalId: string;
@@ -75,7 +92,6 @@ export interface CreatePayoutInput {
   destinationAccount: string;
   reference: string | null;
   description: string | null;
-  status: PayoutStatus;
   apiClientExternalId: string | null;
   apiKeyExternalId: string | null;
 }
@@ -93,8 +109,7 @@ export class PayoutsRepository {
     try {
       const existingIdempotency = await new sql.Request(transaction)
         .input("tenantId", sql.UniqueIdentifier, tenant.id)
-        .input("idempotencyKey", sql.NVarChar(128), input.idempotencyKey)
-        .query<IdempotencyRow>(`
+        .input("idempotencyKey", sql.NVarChar(128), input.idempotencyKey).query<IdempotencyRow>(`
 SELECT request_hash, response_json
 FROM dbo.payout_idempotency_keys WITH (UPDLOCK, HOLDLOCK)
 WHERE tenant_id = @tenantId AND idempotency_key = @idempotencyKey;
@@ -104,13 +119,14 @@ WHERE tenant_id = @tenantId AND idempotency_key = @idempotencyKey;
 
       if (existing) {
         if (existing.request_hash !== input.requestHash) {
-          throw new ConflictException("Idempotency-Key has already been used with a different payout request");
+          throw new ConflictException(
+            "Idempotency-Key has already been used with a different payout request"
+          );
         }
 
         await new sql.Request(transaction)
           .input("tenantId", sql.UniqueIdentifier, tenant.id)
-          .input("idempotencyKey", sql.NVarChar(128), input.idempotencyKey)
-          .query(`
+          .input("idempotencyKey", sql.NVarChar(128), input.idempotencyKey).query(`
 UPDATE dbo.payout_idempotency_keys
 SET last_seen_at = SYSUTCDATETIME()
 WHERE tenant_id = @tenantId AND idempotency_key = @idempotencyKey;
@@ -126,6 +142,11 @@ WHERE tenant_id = @tenantId AND idempotency_key = @idempotencyKey;
         };
       }
 
+      const riskMatch = await findMatchingRiskRule(transaction, tenant.id, input);
+      const payoutStatus: PayoutStatus = riskMatch ? "needs_approval" : "queued";
+      const lifecycleEventType = riskMatch ? "payout.approval_requested.v1" : "payout.created.v1";
+      const lifecycleReason = riskMatch?.reason ?? "payout accepted by API";
+
       const payout = await new sql.Request(transaction)
         .input("tenantId", sql.UniqueIdentifier, tenant.id)
         .input("externalId", sql.NVarChar(64), input.externalId)
@@ -134,10 +155,9 @@ WHERE tenant_id = @tenantId AND idempotency_key = @idempotencyKey;
         .input("destinationAccount", sql.NVarChar(256), input.destinationAccount)
         .input("reference", sql.NVarChar(128), input.reference)
         .input("description", sql.NVarChar(500), input.description)
-        .input("status", sql.NVarChar(32), input.status)
+        .input("status", sql.NVarChar(32), payoutStatus)
         .input("apiClientExternalId", sql.NVarChar(64), input.apiClientExternalId)
-        .input("apiKeyExternalId", sql.NVarChar(64), input.apiKeyExternalId)
-        .query<PayoutRow>(`
+        .input("apiKeyExternalId", sql.NVarChar(64), input.apiKeyExternalId).query<PayoutRow>(`
 INSERT INTO dbo.payouts (
   tenant_id,
   external_id,
@@ -214,16 +234,27 @@ VALUES
         .input("tenantId", sql.UniqueIdentifier, tenant.id)
         .input("payoutId", sql.UniqueIdentifier, payoutRow.id)
         .input("toStatus", sql.NVarChar(32), payoutRow.status)
-        .input("reason", sql.NVarChar(256), "payout accepted by API")
-        .query<PayoutStatusHistoryRow>(`
+        .input("reason", sql.NVarChar(256), lifecycleReason).query<PayoutStatusHistoryRow>(`
 INSERT INTO dbo.payout_status_history (tenant_id, payout_id, from_status, to_status, reason)
 OUTPUT inserted.id, inserted.from_status, inserted.to_status, inserted.reason, inserted.created_at
 VALUES (@tenantId, @payoutId, NULL, @toStatus, @reason);
 `);
 
+      if (riskMatch) {
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, tenant.id)
+          .input("payoutId", sql.UniqueIdentifier, payoutRow.id)
+          .input("riskRuleId", sql.UniqueIdentifier, riskMatch.ruleId)
+          .input("externalId", sql.NVarChar(64), approvalExternalId(payoutRow.external_id))
+          .input("riskReason", sql.NVarChar(500), riskMatch.reason).query(`
+INSERT INTO dbo.payout_approvals (tenant_id, payout_id, risk_rule_id, external_id, risk_reason)
+VALUES (@tenantId, @payoutId, @riskRuleId, @externalId, @riskReason);
+`);
+      }
+
       const outboxEvents = await new sql.Request(transaction)
         .input("tenantId", sql.UniqueIdentifier, tenant.id)
-        .input("eventType", sql.NVarChar(128), "payout.created.v1")
+        .input("eventType", sql.NVarChar(128), lifecycleEventType)
         .input("aggregateType", sql.NVarChar(64), "payout")
         .input("aggregateId", sql.NVarChar(64), payoutRow.external_id)
         .input(
@@ -234,10 +265,11 @@ VALUES (@tenantId, @payoutId, NULL, @toStatus, @reason);
             tenantId: tenant.external_id,
             amountMinor: Number(payoutRow.amount_minor),
             currency: payoutRow.currency.trim(),
-            status: payoutRow.status
+            status: payoutRow.status,
+            riskRuleId: riskMatch?.ruleExternalId ?? null,
+            riskReason: riskMatch?.reason ?? null
           })
-        )
-        .query<OutboxEventRow>(`
+        ).query<OutboxEventRow>(`
 INSERT INTO dbo.outbox_events (tenant_id, event_type, aggregate_type, aggregate_id, payload_json)
 OUTPUT inserted.id, inserted.event_type, inserted.aggregate_type, inserted.aggregate_id, inserted.status, inserted.attempts, inserted.created_at
 VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
@@ -245,14 +277,16 @@ VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
 
       await insertAuditLog(transaction, {
         tenantId: tenant.id,
-        action: "payout.created",
+        action: riskMatch ? "payout.approval_requested" : "payout.created",
         resourceType: "payout",
         resourceId: payoutRow.external_id,
         metadata: {
           amountMinor: Number(payoutRow.amount_minor),
           currency: payoutRow.currency.trim(),
           idempotencyKey: input.idempotencyKey,
-          apiClientId: input.apiClientExternalId
+          apiClientId: input.apiClientExternalId,
+          riskRuleId: riskMatch?.ruleExternalId ?? null,
+          riskReason: riskMatch?.reason ?? null
         }
       });
 
@@ -268,8 +302,7 @@ VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
         .input("idempotencyKey", sql.NVarChar(128), input.idempotencyKey)
         .input("requestHash", sql.NVarChar(128), input.requestHash)
         .input("payoutId", sql.UniqueIdentifier, payoutRow.id)
-        .input("responseJson", sql.NVarChar(sql.MAX), JSON.stringify(details))
-        .query(`
+        .input("responseJson", sql.NVarChar(sql.MAX), JSON.stringify(details)).query(`
 INSERT INTO dbo.payout_idempotency_keys (
   tenant_id,
   idempotency_key,
@@ -296,13 +329,12 @@ VALUES (@tenantId, @idempotencyKey, @requestHash, @payoutId, @responseJson);
   async listPayouts(tenantExternalId: string): Promise<PayoutSummary[]> {
     const tenant = await this.requireTenant(tenantExternalId);
     const pool = await this.database.connect();
-    const result = await pool
-      .request()
-      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+    const result = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
       .query<PayoutRow>(`
 SELECT TOP 50
   id,
   external_id,
+  provider_payout_id,
   amount_minor,
   currency,
   destination_account,
@@ -319,21 +351,27 @@ ORDER BY created_at DESC;
     return result.recordset.map((row) => mapPayout(row, tenant.external_id));
   }
 
-  async getPayout(tenantExternalId: string, payoutExternalId: string): Promise<PayoutDetailsResponse> {
+  async getPayout(
+    tenantExternalId: string,
+    payoutExternalId: string
+  ): Promise<PayoutDetailsResponse> {
     const tenant = await this.requireTenant(tenantExternalId);
     return this.loadPayoutDetails(tenant, payoutExternalId);
   }
 
-  private async loadPayoutDetails(tenant: TenantRow, payoutExternalId: string): Promise<PayoutDetailsResponse> {
+  private async loadPayoutDetails(
+    tenant: TenantRow,
+    payoutExternalId: string
+  ): Promise<PayoutDetailsResponse> {
     const pool = await this.database.connect();
     const payout = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenant.id)
-      .input("payoutExternalId", sql.NVarChar(64), payoutExternalId)
-      .query<PayoutRow>(`
+      .input("payoutExternalId", sql.NVarChar(64), payoutExternalId).query<PayoutRow>(`
 SELECT
   id,
   external_id,
+  provider_payout_id,
   amount_minor,
   currency,
   destination_account,
@@ -355,8 +393,7 @@ WHERE tenant_id = @tenantId AND external_id = @payoutExternalId;
     const ledgerEntries = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenant.id)
-      .input("payoutId", sql.UniqueIdentifier, payoutRow.id)
-      .query<LedgerEntryRow>(`
+      .input("payoutId", sql.UniqueIdentifier, payoutRow.id).query<LedgerEntryRow>(`
 SELECT
   ledger_entries.id,
   ledger_entries.external_id,
@@ -375,8 +412,7 @@ ORDER BY ledger_entries.id ASC;
     const statusHistory = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenant.id)
-      .input("payoutId", sql.UniqueIdentifier, payoutRow.id)
-      .query<PayoutStatusHistoryRow>(`
+      .input("payoutId", sql.UniqueIdentifier, payoutRow.id).query<PayoutStatusHistoryRow>(`
 SELECT id, from_status, to_status, reason, created_at
 FROM dbo.payout_status_history
 WHERE tenant_id = @tenantId AND payout_id = @payoutId
@@ -386,8 +422,7 @@ ORDER BY created_at ASC, id ASC;
     const outboxEvents = await pool
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenant.id)
-      .input("aggregateId", sql.NVarChar(64), payoutRow.external_id)
-      .query<OutboxEventRow>(`
+      .input("aggregateId", sql.NVarChar(64), payoutRow.external_id).query<OutboxEventRow>(`
 SELECT id, event_type, aggregate_type, aggregate_id, status, attempts, created_at
 FROM dbo.outbox_events
 WHERE tenant_id = @tenantId AND aggregate_type = N'payout' AND aggregate_id = @aggregateId
@@ -404,9 +439,7 @@ ORDER BY created_at ASC;
 
   private async requireTenant(externalId: string): Promise<TenantRow> {
     const pool = await this.database.connect();
-    const result = await pool
-      .request()
-      .input("externalId", sql.NVarChar(64), externalId)
+    const result = await pool.request().input("externalId", sql.NVarChar(64), externalId)
       .query<TenantRow>(`
 SELECT id, external_id
 FROM dbo.tenants
@@ -421,6 +454,67 @@ WHERE external_id = @externalId AND status = N'active';
 
     return tenant;
   }
+}
+
+async function findMatchingRiskRule(
+  transaction: sql.Transaction,
+  tenantId: string,
+  input: Pick<CreatePayoutInput, "amountMinor" | "currency" | "destinationAccount">
+): Promise<RiskMatch | null> {
+  const result = await new sql.Request(transaction).input(
+    "tenantId",
+    sql.UniqueIdentifier,
+    tenantId
+  ).query<RiskRuleRow>(`
+SELECT id, external_id, name, rule_type, action, amount_minor, currency, destination_account
+FROM dbo.risk_rules
+WHERE status = N'active'
+  AND action = N'require_approval'
+  AND (tenant_id = @tenantId OR tenant_id IS NULL)
+ORDER BY CASE WHEN tenant_id = @tenantId THEN 0 ELSE 1 END, created_at DESC;
+`);
+
+  for (const rule of result.recordset) {
+    if (rule.rule_type === "amount_threshold" && matchesAmountThreshold(rule, input)) {
+      const threshold = Number(rule.amount_minor);
+      return {
+        ruleId: rule.id,
+        ruleExternalId: rule.external_id,
+        reason: `Payout amount ${input.currency} ${input.amountMinor} meets approval threshold ${rule.currency?.trim() ?? input.currency} ${threshold}`
+      };
+    }
+
+    if (
+      rule.rule_type === "blocked_destination" &&
+      matchesBlockedDestination(rule, input.destinationAccount)
+    ) {
+      return {
+        ruleId: rule.id,
+        ruleExternalId: rule.external_id,
+        reason: `Destination account ${input.destinationAccount} requires manual approval`
+      };
+    }
+  }
+
+  return null;
+}
+
+function matchesAmountThreshold(
+  rule: RiskRuleRow,
+  input: Pick<CreatePayoutInput, "amountMinor" | "currency">
+): boolean {
+  if (rule.amount_minor === null) {
+    return false;
+  }
+
+  const currency = rule.currency?.trim();
+  return (
+    input.amountMinor >= Number(rule.amount_minor) && (!currency || currency === input.currency)
+  );
+}
+
+function matchesBlockedDestination(rule: RiskRuleRow, destinationAccount: string): boolean {
+  return rule.destination_account?.toLowerCase() === destinationAccount.toLowerCase();
 }
 
 async function insertAuditLog(
@@ -440,8 +534,7 @@ async function insertAuditLog(
     .input("action", sql.NVarChar(128), input.action)
     .input("resourceType", sql.NVarChar(128), input.resourceType)
     .input("resourceId", sql.NVarChar(128), input.resourceId)
-    .input("metadataJson", sql.NVarChar(sql.MAX), JSON.stringify(input.metadata))
-    .query(`
+    .input("metadataJson", sql.NVarChar(sql.MAX), JSON.stringify(input.metadata)).query(`
 INSERT INTO dbo.audit_logs (
   tenant_id,
   actor_type,
@@ -453,6 +546,10 @@ INSERT INTO dbo.audit_logs (
 )
 VALUES (@tenantId, @actorType, @actorId, @action, @resourceType, @resourceId, @metadataJson);
 `);
+}
+
+function approvalExternalId(payoutExternalId: string): string {
+  return `apr_${payoutExternalId.replace(/^po_/, "")}`;
 }
 
 function mapPayout(row: PayoutRow, tenantExternalId: string): PayoutSummary {

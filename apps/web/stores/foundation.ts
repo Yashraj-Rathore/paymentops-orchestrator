@@ -1,5 +1,6 @@
-﻿import type {
+import type {
   ApiClientSummary,
+  ApprovalDecisionResponse,
   CreateApiClientRequest,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
@@ -20,6 +21,7 @@ interface FoundationState {
   revealedApiKeySecret: string | null;
   revealedWebhookSecret: string | null;
   lastCreatedPayout: CreatePayoutResponse | null;
+  lastApprovalDecision: ApprovalDecisionResponse | null;
   lastReplayedDelivery: ReplayWebhookDeliveryResponse | null;
   saving: boolean;
   loading: boolean;
@@ -34,6 +36,7 @@ export const useFoundationStore = defineStore("foundation", {
     revealedApiKeySecret: null,
     revealedWebhookSecret: null,
     lastCreatedPayout: null,
+    lastApprovalDecision: null,
     lastReplayedDelivery: null,
     saving: false,
     loading: false,
@@ -82,11 +85,14 @@ export const useFoundationStore = defineStore("foundation", {
       const tenantId = requireTenantId(this.dashboard);
 
       await this.mutate(async () => {
-        const client = await $fetch<ApiClientSummary>(`${apiBaseUrl}/v1/tenants/${tenantId}/api-clients`, {
-          method: "POST",
-          headers: adminHeaders(devAdminToken),
-          body
-        });
+        const client = await $fetch<ApiClientSummary>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/api-clients`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
         this.message = `Created API client ${client.name}`;
         await this.load(apiBaseUrl, devAdminToken, tenantId);
       });
@@ -96,11 +102,14 @@ export const useFoundationStore = defineStore("foundation", {
       const tenantId = requireTenantId(this.dashboard);
 
       await this.mutate(async () => {
-        const apiKey = await $fetch<CreateApiKeyResponse>(`${apiBaseUrl}/v1/tenants/${tenantId}/api-keys`, {
-          method: "POST",
-          headers: adminHeaders(devAdminToken),
-          body
-        });
+        const apiKey = await $fetch<CreateApiKeyResponse>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/api-keys`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
         this.revealedApiKeySecret = apiKey.secret;
         this.message = `Minted API key ${apiKey.name}`;
         await this.load(apiBaseUrl, devAdminToken, tenantId);
@@ -139,15 +148,62 @@ export const useFoundationStore = defineStore("foundation", {
       const tenantId = requireTenantId(this.dashboard);
 
       await this.mutate(async () => {
-        const payout = await $fetch<CreatePayoutResponse>(`${apiBaseUrl}/v1/tenants/${tenantId}/payouts`, {
-          method: "POST",
-          headers: apiKeyHeaders(apiKeySecret, idempotencyKey),
-          body
-        });
+        const payout = await $fetch<CreatePayoutResponse>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/payouts`,
+          {
+            method: "POST",
+            headers: apiKeyHeaders(apiKeySecret, idempotencyKey),
+            body
+          }
+        );
         this.lastCreatedPayout = payout;
         this.message = payout.replayed
           ? `Replayed payout ${payout.id}`
           : `Created payout ${payout.id}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async approvePayout(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      payoutId: string,
+      reason?: string | null
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+
+      await this.mutate(async () => {
+        this.lastApprovalDecision = await $fetch<ApprovalDecisionResponse>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/approvals/${payoutId}/approve`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body: { reason: reason ?? null }
+          }
+        );
+        this.message = `Approved payout ${payoutId}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async rejectPayout(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      payoutId: string,
+      reason?: string | null
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+
+      await this.mutate(async () => {
+        this.lastApprovalDecision = await $fetch<ApprovalDecisionResponse>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/approvals/${payoutId}/reject`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body: { reason: reason ?? null }
+          }
+        );
+        this.message = `Rejected payout ${payoutId}`;
         await this.load(apiBaseUrl, devAdminToken, tenantId);
       });
     },
