@@ -277,6 +277,19 @@ h1 {
   text-align: right;
 }
 
+.row-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 140px;
+}
+
+.compact-button {
+  min-height: 30px;
+  padding: 6px 10px;
+}
+
 @media (max-width: 860px) {
   .data-grid {
     grid-template-columns: 1fr;
@@ -290,6 +303,11 @@ h1 {
   .row-item small {
     max-width: 100%;
     text-align: left;
+  }
+
+  .row-actions {
+    justify-content: flex-start;
+    min-width: 0;
   }
 }
 

@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ApiClientSummary,
   CreateApiClientRequest,
   CreateApiKeyRequest,
@@ -7,9 +7,10 @@ import type {
   CreatePayoutResponse,
   CreateTenantRequest,
   CreateWebhookEndpointRequest,
+  CreateWebhookEndpointResponse,
+  ReplayWebhookDeliveryResponse,
   TenantDashboardResponse,
-  TenantSummary,
-  WebhookEndpointSummary
+  TenantSummary
 } from "@paymentops/contracts";
 import { defineStore } from "pinia";
 
@@ -17,7 +18,9 @@ interface FoundationState {
   dashboard: TenantDashboardResponse | null;
   activeTenantId: string | null;
   revealedApiKeySecret: string | null;
+  revealedWebhookSecret: string | null;
   lastCreatedPayout: CreatePayoutResponse | null;
+  lastReplayedDelivery: ReplayWebhookDeliveryResponse | null;
   saving: boolean;
   loading: boolean;
   message: string | null;
@@ -29,7 +32,9 @@ export const useFoundationStore = defineStore("foundation", {
     dashboard: null,
     activeTenantId: null,
     revealedApiKeySecret: null,
+    revealedWebhookSecret: null,
     lastCreatedPayout: null,
+    lastReplayedDelivery: null,
     saving: false,
     loading: false,
     message: null,
@@ -110,7 +115,7 @@ export const useFoundationStore = defineStore("foundation", {
       const tenantId = requireTenantId(this.dashboard);
 
       await this.mutate(async () => {
-        const webhook = await $fetch<WebhookEndpointSummary>(
+        const webhook = await $fetch<CreateWebhookEndpointResponse>(
           `${apiBaseUrl}/v1/tenants/${tenantId}/webhook-endpoints`,
           {
             method: "POST",
@@ -118,6 +123,7 @@ export const useFoundationStore = defineStore("foundation", {
             body
           }
         );
+        this.revealedWebhookSecret = webhook.secret;
         this.message = `Registered webhook ${webhook.id}`;
         await this.load(apiBaseUrl, devAdminToken, tenantId);
       });
@@ -146,8 +152,29 @@ export const useFoundationStore = defineStore("foundation", {
       });
     },
 
-    clearSecret() {
+    async replayWebhookDelivery(apiBaseUrl: string, devAdminToken: string, deliveryId: string) {
+      const tenantId = requireTenantId(this.dashboard);
+
+      await this.mutate(async () => {
+        this.lastReplayedDelivery = await $fetch<ReplayWebhookDeliveryResponse>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/webhook-deliveries/${deliveryId}/replay`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body: {}
+          }
+        );
+        this.message = `Queued webhook replay ${deliveryId}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    clearApiKeySecret() {
       this.revealedApiKeySecret = null;
+    },
+
+    clearWebhookSecret() {
+      this.revealedWebhookSecret = null;
     },
 
     async mutate(operation: () => Promise<void>) {

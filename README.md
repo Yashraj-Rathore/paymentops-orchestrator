@@ -2,14 +2,14 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, append-only ledger entries, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation, persistence, identity, and payout-core baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, outbox events, worker dispatch, provider simulator callbacks, and a usable dashboard shell.
+The current milestone is a foundation, persistence, identity, payout-core, and webhook-delivery baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, and a usable dashboard shell.
 
 ## Workspace
 
 ```text
 apps/
   api/                  NestJS HTTP API with health, Swagger, auth, migrations, tenant operations, and payout core
-  worker/               NestJS worker that dispatches payout outbox events to the provider simulator
+  worker/               NestJS worker that dispatches provider payouts and merchant webhooks
   web/                  Nuxt 3 + Vue 3 + Pinia operator dashboard with create forms and payout visibility
   provider-simulator/   NestJS provider simulator shell
 packages/
@@ -92,12 +92,14 @@ Useful auth smoke endpoints:
 - `POST /v1/tenants` creates a tenant and owner membership.
 - `POST /v1/tenants/:tenantId/api-clients` creates an API client.
 - `POST /v1/tenants/:tenantId/api-keys` mints an API key and returns the secret once.
-- `POST /v1/tenants/:tenantId/webhook-endpoints` registers an outbound webhook endpoint.
-- `GET /v1/tenants/:tenantId/summary` returns tenant dashboard data, recent payouts, ledger entries, outbox events, and audit logs.
+- `POST /v1/tenants/:tenantId/webhook-endpoints` registers an outbound webhook endpoint and returns the signing secret once.
+- `GET /v1/tenants/:tenantId/summary` returns tenant dashboard data, recent payouts, ledger entries, outbox events, webhook deliveries, and audit logs.
 - `POST /v1/tenants/:tenantId/payouts` creates a payout with `x-api-key` and required `Idempotency-Key`.
 - `GET /v1/tenants/:tenantId/payouts` lists recent payouts for the API-key tenant.
 - `GET /v1/tenants/:tenantId/payouts/:payoutId` returns payout details, ledger entries, status history, and outbox events.
 - `POST /v1/provider-callbacks/payouts` accepts provider simulator payout callbacks.
+- `GET /v1/tenants/:tenantId/webhook-deliveries` lists recent webhook delivery attempts.
+- `POST /v1/tenants/:tenantId/webhook-deliveries/:deliveryId/replay` requeues a delivery for replay.
 - `GET /v1/demo/dashboard` returns the seeded Northstar Marketplaces dashboard.
 - `POST /v1/demo/seed` idempotently seeds the demo tenant.
 
@@ -119,6 +121,11 @@ The payout-core migration creates:
 - `ledger_entries`
 - `payout_status_history`
 - `outbox_events`
+
+The webhook-delivery migration adds endpoint signing secrets and creates:
+
+- `webhook_deliveries`
+- `webhook_delivery_attempts`
 
 API startup runs pending migrations and seeds the demo tenant. The CLI migration command is idempotent and uses the workspace `.env` file.
 
@@ -143,10 +150,21 @@ The provider simulator exposes `POST /v1/provider/payouts`. It returns a provide
 
 Dispatch failures increment the outbox attempt count and retry until the event is moved to `dead_letter` after repeated failures.
 
+## Merchant Webhook Delivery
+
+The worker creates webhook delivery records for active endpoints whose subscriptions match payout outbox events. Delivery payloads are signed with HMAC SHA-256 and include these headers:
+
+- `PaymentOps-Signature`
+- `PaymentOps-Timestamp`
+- `PaymentOps-Event-Id`
+- `PaymentOps-Delivery-Id`
+
+Each delivery records attempts, HTTP status, response body snippets, last error, delivered timestamp, retry schedule, and dead-letter state. Failed and dead-lettered deliveries can be replayed through the API and dashboard.
+
 ## Acceptance Criteria
 
-- `apps/api` exposes health, Swagger, protected tenant operations, API client creation, one-time API key minting, webhook registration, demo dashboard data, Auth0 JWT validation, API-key session introspection, idempotent payout creation, provider callbacks, and payout status transitions.
-- `apps/web` can create tenants, API clients, one-time API keys, webhook endpoints, API-key-backed payouts, and payout dispatch status from the dashboard shell.
+- `apps/api` exposes health, Swagger, protected tenant operations, API client creation, one-time API key minting, webhook registration, webhook delivery replay, demo dashboard data, Auth0 JWT validation, API-key session introspection, idempotent payout creation, provider callbacks, and payout status transitions.
+- `apps/web` can create tenants, API clients, one-time API keys, webhook endpoints, API-key-backed payouts, payout dispatch status, webhook delivery status, and webhook replays from the dashboard shell.
 - `apps/provider-simulator` exposes `GET /health` and Swagger at `/docs`.
 - Shared packages compile under strict TypeScript.
 - Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, OpenTelemetry Collector, and all app services.
@@ -157,5 +175,5 @@ Dispatch failures increment the outbox attempt count and retry until the event i
 1. Foundation setup
 2. Identity and tenancy
 3. Payout core and ledger
-4. Risk, approval, async orchestration, and webhooks
+4. Risk, approval, async orchestration, and webhook hardening
 5. Reconciliation, observability, and AWS staging

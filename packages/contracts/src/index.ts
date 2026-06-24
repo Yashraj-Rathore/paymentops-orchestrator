@@ -1,4 +1,4 @@
-export interface HealthResponse {
+﻿export interface HealthResponse {
   status: "ok";
   service: string;
   environment: string;
@@ -128,6 +128,39 @@ export interface ProviderPayoutCallbackResponse {
   accepted: boolean;
 }
 
+export interface MerchantWebhookEnvelope<TPayload extends Record<string, unknown> = Record<string, unknown>> {
+  id: string;
+  type: string;
+  tenantId: string;
+  aggregateType: string;
+  aggregateId: string;
+  createdAt: string;
+  payload: TPayload;
+}
+
+export type WebhookDeliveryStatus = "pending" | "delivered" | "failed" | "dead_letter";
+
+export interface WebhookDeliverySummary {
+  id: string;
+  webhookEndpointId: string;
+  eventId: string;
+  eventType: string;
+  aggregateType: string;
+  aggregateId: string;
+  status: WebhookDeliveryStatus;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastAttemptedAt: string | null;
+  deliveredAt: string | null;
+  lastStatusCode: number | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface ReplayWebhookDeliveryResponse extends WebhookDeliverySummary {
+  replayed: true;
+}
+
 export interface TenantSummary {
   id: string;
   name: string;
@@ -172,6 +205,10 @@ export interface WebhookEndpointSummary {
   createdAt: string;
 }
 
+export interface CreateWebhookEndpointResponse extends WebhookEndpointSummary {
+  secret: string;
+}
+
 export interface AuditLogSummary {
   id: string;
   actorType: string;
@@ -188,6 +225,7 @@ export interface TenantDashboardResponse {
   apiClients: ApiClientSummary[];
   apiKeys: ApiKeySummary[];
   webhookEndpoints: WebhookEndpointSummary[];
+  webhookDeliveries: WebhookDeliverySummary[];
   payouts: PayoutSummary[];
   ledgerEntries: LedgerEntrySummary[];
   outboxEvents: OutboxEventSummary[];
@@ -197,6 +235,8 @@ export interface TenantDashboardResponse {
     apiClients: number;
     activeApiKeys: number;
     webhookEndpoints: number;
+    webhookDeliveries: number;
+    failedWebhookDeliveries: number;
     payouts: number;
     ledgerEntries: number;
     pendingOutboxEvents: number;

@@ -1,10 +1,11 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+﻿import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import type {
   CreateApiClientRequest,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
   CreateTenantRequest,
   CreateWebhookEndpointRequest,
+  CreateWebhookEndpointResponse,
   TenantDashboardResponse
 } from "@paymentops/contracts";
 import { createHash, randomBytes } from "node:crypto";
@@ -71,7 +72,10 @@ export class OperationsService {
     });
   }
 
-  async createWebhookEndpoint(tenantId: string, body: CreateWebhookEndpointRequest) {
+  async createWebhookEndpoint(
+    tenantId: string,
+    body: CreateWebhookEndpointRequest
+  ): Promise<CreateWebhookEndpointResponse> {
     const url = requiredString(body.url, "url");
 
     try {
@@ -83,12 +87,15 @@ export class OperationsService {
       throw new BadRequestException("url must be a valid http or https URL");
     }
 
+    const secret = `whsec_${randomBytes(24).toString("base64url")}`;
+
     return this.repository.createWebhookEndpoint({
       tenantExternalId: tenantId,
       externalId: externalId("whk"),
       url,
       description: optionalString(body.description) ?? null,
-      secretHash: hashSecret(`whsec_${randomBytes(24).toString("base64url")}`),
+      secretHash: hashSecret(secret),
+      signingSecret: secret,
       eventSubscriptions: normalizeEvents(body.eventSubscriptions)
     });
   }
@@ -126,7 +133,7 @@ function normalizePermissions(value: unknown): string[] {
 
 function normalizeEvents(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0) {
-    return ["payout.created.v1", "payout.settled.v1"];
+    return ["payout.created.v1", "payout.processing.v1", "payout.paid.v1", "payout.failed.v1"];
   }
 
   const events = value.filter((event): event is string => typeof event === "string");

@@ -258,5 +258,69 @@ BEGIN
   CREATE INDEX ix_payouts_provider_payout_id ON dbo.payouts (provider_payout_id) WHERE provider_payout_id IS NOT NULL;
 END;
 `
+  },
+  {
+    version: "004",
+    name: "merchant_webhook_deliveries",
+    sql: `
+IF COL_LENGTH(N'dbo.webhook_endpoints', N'signing_secret') IS NULL
+BEGIN
+  ALTER TABLE dbo.webhook_endpoints ADD signing_secret NVARCHAR(128) NULL;
+END;
+
+UPDATE dbo.webhook_endpoints
+SET signing_secret = CONCAT(N'whsec_seeded_', external_id)
+WHERE signing_secret IS NULL;
+
+IF OBJECT_ID(N'dbo.webhook_deliveries', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.webhook_deliveries (
+    id UNIQUEIDENTIFIER NOT NULL CONSTRAINT pk_webhook_deliveries PRIMARY KEY DEFAULT NEWID(),
+    external_id NVARCHAR(64) NOT NULL CONSTRAINT uq_webhook_deliveries_external_id UNIQUE,
+    tenant_id UNIQUEIDENTIFIER NOT NULL,
+    webhook_endpoint_id UNIQUEIDENTIFIER NOT NULL,
+    outbox_event_id UNIQUEIDENTIFIER NOT NULL,
+    event_type NVARCHAR(128) NOT NULL,
+    aggregate_type NVARCHAR(64) NOT NULL,
+    aggregate_id NVARCHAR(64) NOT NULL,
+    payload_json NVARCHAR(MAX) NOT NULL,
+    status NVARCHAR(32) NOT NULL CONSTRAINT df_webhook_deliveries_status DEFAULT N'pending',
+    attempts INT NOT NULL CONSTRAINT df_webhook_deliveries_attempts DEFAULT 0,
+    next_attempt_at DATETIME2(3) NULL CONSTRAINT df_webhook_deliveries_next_attempt_at DEFAULT SYSUTCDATETIME(),
+    last_attempted_at DATETIME2(3) NULL,
+    delivered_at DATETIME2(3) NULL,
+    last_status_code INT NULL,
+    last_error NVARCHAR(1000) NULL,
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_webhook_deliveries_created_at DEFAULT SYSUTCDATETIME(),
+    updated_at DATETIME2(3) NOT NULL CONSTRAINT df_webhook_deliveries_updated_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT fk_webhook_deliveries_tenant FOREIGN KEY (tenant_id) REFERENCES dbo.tenants(id),
+    CONSTRAINT fk_webhook_deliveries_endpoint FOREIGN KEY (webhook_endpoint_id) REFERENCES dbo.webhook_endpoints(id),
+    CONSTRAINT fk_webhook_deliveries_outbox_event FOREIGN KEY (outbox_event_id) REFERENCES dbo.outbox_events(id),
+    CONSTRAINT uq_webhook_deliveries_endpoint_event UNIQUE (webhook_endpoint_id, outbox_event_id),
+    CONSTRAINT ck_webhook_deliveries_status CHECK (status IN (N'pending', N'delivered', N'failed', N'dead_letter')),
+    CONSTRAINT ck_webhook_deliveries_payload_json CHECK (ISJSON(payload_json) = 1)
+  );
+
+  CREATE INDEX ix_webhook_deliveries_status_next_attempt ON dbo.webhook_deliveries (status, next_attempt_at, created_at ASC);
+  CREATE INDEX ix_webhook_deliveries_tenant_created_at ON dbo.webhook_deliveries (tenant_id, created_at DESC);
+END;
+
+IF OBJECT_ID(N'dbo.webhook_delivery_attempts', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.webhook_delivery_attempts (
+    id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT pk_webhook_delivery_attempts PRIMARY KEY,
+    webhook_delivery_id UNIQUEIDENTIFIER NOT NULL,
+    attempt_number INT NOT NULL,
+    status_code INT NULL,
+    response_body NVARCHAR(2000) NULL,
+    error_message NVARCHAR(1000) NULL,
+    duration_ms INT NOT NULL,
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_webhook_delivery_attempts_created_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT fk_webhook_delivery_attempts_delivery FOREIGN KEY (webhook_delivery_id) REFERENCES dbo.webhook_deliveries(id)
+  );
+
+  CREATE INDEX ix_webhook_delivery_attempts_delivery ON dbo.webhook_delivery_attempts (webhook_delivery_id, attempt_number DESC);
+END;
+`
   }
 ];

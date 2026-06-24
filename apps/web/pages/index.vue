@@ -16,6 +16,7 @@ const {
   error,
   message,
   revealedApiKeySecret,
+  revealedWebhookSecret,
   lastCreatedPayout
 } = storeToRefs(store);
 
@@ -34,7 +35,7 @@ const apiKeyForm = reactive({
 const webhookForm = reactive({
   url: "",
   description: "",
-  eventSubscriptions: "payout.created.v1, payout.settled.v1"
+  eventSubscriptions: "payout.created.v1, payout.processing.v1, payout.paid.v1, payout.failed.v1"
 });
 const payoutForm = reactive({
   amountMinor: 12500,
@@ -100,6 +101,11 @@ const lanes = computed(() => [
     label: "Outbox",
     value: String(dashboard.value?.metrics.pendingOutboxEvents ?? 0),
     state: "pending events"
+  },
+  {
+    label: "Webhooks",
+    value: String(dashboard.value?.metrics.webhookDeliveries ?? 0),
+    state: `${dashboard.value?.metrics.failedWebhookDeliveries ?? 0} failed`
   }
 ]);
 
@@ -172,10 +178,20 @@ async function submitPayout() {
   }
 }
 
-async function copySecret() {
+async function copyApiKeySecret() {
   if (revealedApiKeySecret.value) {
     await navigator.clipboard.writeText(revealedApiKeySecret.value);
   }
+}
+
+async function copyWebhookSecret() {
+  if (revealedWebhookSecret.value) {
+    await navigator.clipboard.writeText(revealedWebhookSecret.value);
+  }
+}
+
+async function replayWebhookDelivery(deliveryId: string) {
+  await store.replayWebhookDelivery(apiBaseUrl, devAdminToken, deliveryId);
 }
 
 function csv(value: string): string[] {
@@ -272,6 +288,11 @@ function newIdempotencyKey(): string {
           <span>Pending events</span>
           <strong>{{ dashboard?.metrics.pendingOutboxEvents ?? 0 }}</strong>
           <small>Outbox publish queue</small>
+        </article>
+        <article class="metric">
+          <span>Webhook deliveries</span>
+          <strong>{{ dashboard?.metrics.webhookDeliveries ?? 0 }}</strong>
+          <small>{{ dashboard?.metrics.failedWebhookDeliveries ?? 0 }} need attention</small>
         </article>
       </section>
 
@@ -395,8 +416,19 @@ function newIdempotencyKey(): string {
           <code>{{ revealedApiKeySecret }}</code>
         </div>
         <div class="button-row">
-          <button class="secondary-button" type="button" @click="copySecret">Copy</button>
-          <button class="secondary-button" type="button" @click="store.clearSecret()">Dismiss</button>
+          <button class="secondary-button" type="button" @click="copyApiKeySecret">Copy</button>
+          <button class="secondary-button" type="button" @click="store.clearApiKeySecret()">Dismiss</button>
+        </div>
+      </section>
+
+      <section v-if="revealedWebhookSecret" class="secret-reveal" aria-label="Webhook signing secret">
+        <div>
+          <span>Webhook signing secret</span>
+          <code>{{ revealedWebhookSecret }}</code>
+        </div>
+        <div class="button-row">
+          <button class="secondary-button" type="button" @click="copyWebhookSecret">Copy</button>
+          <button class="secondary-button" type="button" @click="store.clearWebhookSecret()">Dismiss</button>
         </div>
       </section>
 
@@ -483,6 +515,31 @@ function newIdempotencyKey(): string {
               <span>{{ webhook.url }}</span>
             </div>
             <small>{{ webhook.eventSubscriptions.join(", ") }}</small>
+          </div>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Webhook Deliveries</h2>
+          </header>
+          <div v-for="delivery in dashboard?.webhookDeliveries" :key="delivery.id" class="row-item">
+            <div>
+              <strong>{{ delivery.eventType }}</strong>
+              <span>{{ delivery.webhookEndpointId }} / {{ delivery.aggregateId }} / attempts {{ delivery.attempts }}</span>
+              <span v-if="delivery.lastError">{{ delivery.lastError }}</span>
+            </div>
+            <div class="row-actions">
+              <small>{{ delivery.status }}</small>
+              <button
+                v-if="delivery.status === 'failed' || delivery.status === 'dead_letter'"
+                class="secondary-button compact-button"
+                type="button"
+                :disabled="saving"
+                @click="replayWebhookDelivery(delivery.id)"
+              >
+                Replay
+              </button>
+            </div>
           </div>
         </article>
 

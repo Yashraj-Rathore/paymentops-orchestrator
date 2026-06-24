@@ -1,14 +1,16 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+﻿import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type {
   ApiClientSummary,
   ApiKeySummary,
   AuditLogSummary,
+  CreateWebhookEndpointResponse,
   LedgerEntrySummary,
   OutboxEventSummary,
   PayoutSummary,
   TenantDashboardResponse,
   TenantSummary,
   UserMembershipSummary,
+  WebhookDeliverySummary,
   WebhookEndpointSummary
 } from "@paymentops/contracts";
 import sql from "mssql";
@@ -59,6 +61,23 @@ interface WebhookEndpointRow {
   created_at: Date;
 }
 
+interface WebhookDeliveryRow {
+  external_id: string;
+  webhook_endpoint_external_id: string;
+  outbox_event_id: string;
+  event_type: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  status: WebhookDeliverySummary["status"];
+  attempts: number;
+  next_attempt_at: Date | null;
+  last_attempted_at: Date | null;
+  delivered_at: Date | null;
+  last_status_code: number | null;
+  last_error: string | null;
+  created_at: Date;
+}
+
 interface AuditLogRow {
   id: string;
   actor_type: string;
@@ -68,6 +87,7 @@ interface AuditLogRow {
   resource_id: string;
   created_at: Date;
 }
+
 interface PayoutRow {
   external_id: string;
   provider_payout_id: string | null;
@@ -265,8 +285,9 @@ VALUES (@tenantId, @apiClientId, @externalId, @name, @keyHash, @keyPrefix, @perm
     url: string;
     description: string | null;
     secretHash: string;
+    signingSecret: string;
     eventSubscriptions: string[];
-  }): Promise<WebhookEndpointSummary> {
+  }): Promise<CreateWebhookEndpointResponse> {
     const tenant = await this.requireTenant(input.tenantExternalId);
     const pool = await this.database.connect();
     const result = await pool
@@ -276,6 +297,7 @@ VALUES (@tenantId, @apiClientId, @externalId, @name, @keyHash, @keyPrefix, @perm
       .input("url", sql.NVarChar(2048), input.url)
       .input("description", sql.NVarChar(500), input.description)
       .input("secretHash", sql.NVarChar(128), input.secretHash)
+      .input("signingSecret", sql.NVarChar(128), input.signingSecret)
       .input("eventsJson", sql.NVarChar(sql.MAX), JSON.stringify(input.eventSubscriptions))
       .query<WebhookEndpointRow>(`
 INSERT INTO dbo.webhook_endpoints (
@@ -284,6 +306,7 @@ INSERT INTO dbo.webhook_endpoints (
   url,
   description,
   secret_hash,
+  signing_secret,
   event_subscriptions_json
 )
 OUTPUT
@@ -294,7 +317,7 @@ OUTPUT
   inserted.event_subscriptions_json,
   inserted.status,
   inserted.created_at
-VALUES (@tenantId, @externalId, @url, @description, @secretHash, @eventsJson);
+VALUES (@tenantId, @externalId, @url, @description, @secretHash, @signingSecret, @eventsJson);
 `);
 
     await this.writeAuditLog({
@@ -305,7 +328,10 @@ VALUES (@tenantId, @externalId, @url, @description, @secretHash, @eventsJson);
       metadata: { url: input.url, eventSubscriptions: input.eventSubscriptions }
     });
 
-    return mapWebhookEndpoint(result.recordset[0]);
+    return {
+      ...mapWebhookEndpoint(result.recordset[0]),
+      secret: input.signingSecret
+    };
   }
 
   async getTenantDashboard(tenantExternalId: string): Promise<TenantDashboardResponse> {
@@ -401,12 +427,38 @@ WHERE tenant_id = @tenantId
 ORDER BY created_at DESC;
 `);
 
+    const webhookDeliveries = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<WebhookDeliveryRow>(`
+SELECT TOP 10
+  webhook_deliveries.external_id,
+  webhook_endpoints.external_id AS webhook_endpoint_external_id,
+  CONVERT(NVARCHAR(36), webhook_deliveries.outbox_event_id) AS outbox_event_id,
+  webhook_deliveries.event_type,
+  webhook_deliveries.aggregate_type,
+  webhook_deliveries.aggregate_id,
+  webhook_deliveries.status,
+  webhook_deliveries.attempts,
+  webhook_deliveries.next_attempt_at,
+  webhook_deliveries.last_attempted_at,
+  webhook_deliveries.delivered_at,
+  webhook_deliveries.last_status_code,
+  webhook_deliveries.last_error,
+  webhook_deliveries.created_at
+FROM dbo.webhook_deliveries
+INNER JOIN dbo.webhook_endpoints ON webhook_endpoints.id = webhook_deliveries.webhook_endpoint_id
+WHERE webhook_deliveries.tenant_id = @tenantId
+ORDER BY webhook_deliveries.created_at DESC;
+`);
+
     return {
       tenant: mapTenant(tenant),
       memberships: memberships.recordset.map(mapMembership),
       apiClients: apiClients.recordset.map(mapApiClient),
       apiKeys: apiKeys.recordset.map(mapApiKey),
       webhookEndpoints: webhooks.recordset.map(mapWebhookEndpoint),
+      webhookDeliveries: webhookDeliveries.recordset.map(mapWebhookDelivery),
       payouts: payouts.recordset.map((row) => mapPayout(row, tenant.external_id)),
       ledgerEntries: ledgerEntries.recordset.map(mapLedgerEntry),
       outboxEvents: outboxEvents.recordset.map(mapOutboxEvent),
@@ -416,6 +468,10 @@ ORDER BY created_at DESC;
         apiClients: apiClients.recordset.length,
         activeApiKeys: apiKeys.recordset.length,
         webhookEndpoints: webhooks.recordset.length,
+        webhookDeliveries: webhookDeliveries.recordset.length,
+        failedWebhookDeliveries: webhookDeliveries.recordset.filter(
+          (delivery) => delivery.status === "failed" || delivery.status === "dead_letter"
+        ).length,
         payouts: payouts.recordset.length,
         ledgerEntries: ledgerEntries.recordset.length,
         pendingOutboxEvents: outboxEvents.recordset.filter((event) => event.status === "pending").length,
@@ -465,7 +521,8 @@ WHERE external_id = @externalId;
         url: "https://webhooks.example.com/paymentops/events",
         description: "Demo operations webhook endpoint",
         secretHash: "seeded-webhook-secret-hash",
-        eventSubscriptions: ["payout.created.v1", "payout.settled.v1", "webhook.dead_lettered.v1"]
+        signingSecret: "whsec_demo_northstar",
+        eventSubscriptions: ["payout.created.v1", "payout.processing.v1", "payout.paid.v1", "payout.failed.v1"]
       });
     }
   }
@@ -689,6 +746,25 @@ function mapWebhookEndpoint(row: WebhookEndpointRow): WebhookEndpointSummary {
     description: row.description,
     eventSubscriptions: JSON.parse(row.event_subscriptions_json) as string[],
     status: row.status,
+    createdAt: row.created_at.toISOString()
+  };
+}
+
+function mapWebhookDelivery(row: WebhookDeliveryRow): WebhookDeliverySummary {
+  return {
+    id: row.external_id,
+    webhookEndpointId: row.webhook_endpoint_external_id,
+    eventId: row.outbox_event_id,
+    eventType: row.event_type,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    status: row.status,
+    attempts: row.attempts,
+    nextAttemptAt: row.next_attempt_at?.toISOString() ?? null,
+    lastAttemptedAt: row.last_attempted_at?.toISOString() ?? null,
+    deliveredAt: row.delivered_at?.toISOString() ?? null,
+    lastStatusCode: row.last_status_code,
+    lastError: row.last_error,
     createdAt: row.created_at.toISOString()
   };
 }
