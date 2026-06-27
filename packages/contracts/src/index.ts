@@ -210,6 +210,61 @@ export interface ReplayWebhookDeliveryResponse extends WebhookDeliverySummary {
   replayed: true;
 }
 
+export type SettlementMatchStatus = "matched" | "missing" | "amount_mismatch";
+
+export type ReconciliationDiscrepancyStatus = "open" | "resolved";
+
+export interface SettlementRowSummary {
+  id: string;
+  providerPayoutId: string;
+  payoutId: string | null;
+  amountMinor: number;
+  currency: string;
+  providerStatus: string;
+  settledAt: string | null;
+  matchStatus: SettlementMatchStatus;
+}
+
+export interface ReconciliationDiscrepancySummary {
+  id: string;
+  settlementRowId: string;
+  providerPayoutId: string;
+  payoutId: string | null;
+  type: Exclude<SettlementMatchStatus, "matched">;
+  status: ReconciliationDiscrepancyStatus;
+  expectedAmountMinor: number | null;
+  actualAmountMinor: number;
+  expectedCurrency: string | null;
+  actualCurrency: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ReconciliationImportSummary {
+  id: string;
+  tenantId: string;
+  providerName: string;
+  fileName: string;
+  status: "processing" | "completed" | "failed";
+  rowCount: number;
+  matchedCount: number;
+  discrepancyCount: number;
+  importedBy: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface ReconciliationImportDetails extends ReconciliationImportSummary {
+  rows: SettlementRowSummary[];
+  discrepancies: ReconciliationDiscrepancySummary[];
+}
+
+export interface CreateReconciliationImportRequest {
+  providerName: string;
+  fileName: string;
+  csv: string;
+}
+
 export interface TenantSummary {
   id: string;
   name: string;

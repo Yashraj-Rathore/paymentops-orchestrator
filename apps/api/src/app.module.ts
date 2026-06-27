@@ -7,6 +7,7 @@ import { HealthController } from "./health.controller.js";
 import { OperationsModule } from "./operations/operations.module.js";
 import { PayoutsModule } from "./payouts/payouts.module.js";
 import { ProviderCallbacksModule } from "./provider-callbacks/provider-callbacks.module.js";
+import { ReconciliationModule } from "./reconciliation/reconciliation.module.js";
 import { WebhookDeliveriesModule } from "./webhook-deliveries/webhook-deliveries.module.js";
 
 @Module({
@@ -17,6 +18,7 @@ import { WebhookDeliveriesModule } from "./webhook-deliveries/webhook-deliveries
     OperationsModule,
     PayoutsModule,
     ProviderCallbacksModule,
+    ReconciliationModule,
     WebhookDeliveriesModule
   ],
   controllers: [HealthController]

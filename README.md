@@ -2,7 +2,7 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, append-only ledger entries, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation, persistence, identity, payout-core, risk-approval, and webhook-delivery baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, and a usable dashboard shell.
+The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, and reconciliation baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, and a usable dashboard shell.
 
 ## Workspace
 
@@ -100,6 +100,9 @@ Useful auth smoke endpoints:
 - `POST /v1/provider-callbacks/payouts` accepts provider simulator payout callbacks.
 - `GET /v1/tenants/:tenantId/webhook-deliveries` lists recent webhook delivery attempts.
 - `POST /v1/tenants/:tenantId/webhook-deliveries/:deliveryId/replay` requeues a delivery for replay.
+- `POST /v1/tenants/:tenantId/reconciliation/imports` imports and reconciles a provider settlement CSV.
+- `GET /v1/tenants/:tenantId/reconciliation/imports` lists recent settlement imports.
+- `GET /v1/tenants/:tenantId/reconciliation/imports/:importId` returns settlement rows and discrepancies.
 - `GET /v1/demo/dashboard` returns the seeded Northstar Marketplaces dashboard.
 - `POST /v1/demo/seed` idempotently seeds the demo tenant.
 
@@ -126,6 +129,12 @@ The webhook-delivery migration adds endpoint signing secrets and creates:
 
 - `webhook_deliveries`
 - `webhook_delivery_attempts`
+
+The reconciliation migration creates:
+
+- `settlement_imports`
+- `settlement_rows`
+- `reconciliation_discrepancies`
 
 API startup runs pending migrations and seeds the demo tenant. The CLI migration command is idempotent and uses the workspace `.env` file.
 
@@ -166,10 +175,22 @@ The worker creates webhook delivery records for active endpoints whose subscript
 
 Each delivery records attempts, HTTP status, response body snippets, last error, delivered timestamp, retry schedule, and dead-letter state. Failed and dead-lettered deliveries can be replayed through the API and dashboard.
 
+## Settlement Reconciliation
+
+Operations users can upload provider settlement CSVs with these columns:
+
+```text
+provider_payout_id,amount_minor,currency,status,settled_at
+```
+
+Each import is hashed to prevent duplicate processing and reconciled transactionally against tenant payouts by provider payout id. Rows are classified as `matched`, `missing`, or `amount_mismatch`; non-matches create open discrepancy records. Completion writes an audit entry and a `reconciliation.completed.v1` outbox event.
+
+The dashboard includes a sample CSV generator, import history, row-level results, and discrepancy details.
+
 ## Acceptance Criteria
 
 - `apps/api` exposes health, Swagger, protected tenant operations, API client creation, one-time API key minting, webhook registration, webhook delivery replay, demo dashboard data, Auth0 JWT validation, API-key session introspection, idempotent payout creation, provider callbacks, and payout status transitions.
-- `apps/web` can create tenants, API clients, one-time API keys, webhook endpoints, API-key-backed payouts, payout dispatch status, webhook delivery status, and webhook replays from the dashboard shell.
+- `apps/web` can create tenants, API clients, one-time API keys, webhook endpoints, API-key-backed payouts, payout dispatch status, webhook delivery status, webhook replays, settlement imports, and reconciliation discrepancies from the dashboard shell.
 - `apps/provider-simulator` exposes `GET /health` and Swagger at `/docs`.
 - Shared packages compile under strict TypeScript.
 - Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, OpenTelemetry Collector, and all app services.

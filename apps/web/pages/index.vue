@@ -2,7 +2,7 @@
 import { useRuntimeConfig } from "#app";
 import { paymentOpsPalette } from "@paymentops/ui";
 import { storeToRefs } from "pinia";
-import { computed, onMounted, reactive, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useFoundationStore } from "~/stores/foundation";
 
 const config = useRuntimeConfig();
@@ -17,7 +17,9 @@ const {
   message,
   revealedApiKeySecret,
   revealedWebhookSecret,
-  lastCreatedPayout
+  lastCreatedPayout,
+  reconciliationImports,
+  selectedReconciliation
 } = storeToRefs(store);
 
 const tenantForm = reactive({
@@ -46,6 +48,12 @@ const payoutForm = reactive({
   apiKeySecret: "",
   idempotencyKey: ""
 });
+const reconciliationForm = reactive({
+  providerName: "PaymentOps Provider Simulator",
+  fileName: "",
+  csv: ""
+});
+const settlementFileInput = ref<HTMLInputElement | null>(null);
 
 onMounted(() => {
   payoutForm.idempotencyKey = newIdempotencyKey();
@@ -108,6 +116,11 @@ const lanes = computed(() => [
     label: "Webhooks",
     value: String(dashboard.value?.metrics.webhookDeliveries ?? 0),
     state: `${dashboard.value?.metrics.failedWebhookDeliveries ?? 0} failed`
+  },
+  {
+    label: "Reconciliation",
+    value: String(reconciliationImports.value.length),
+    state: `${selectedReconciliation.value?.discrepancyCount ?? 0} discrepancies`
   }
 ]);
 
@@ -210,6 +223,61 @@ async function rejectPayout(payoutId: string) {
   );
 }
 
+async function handleSettlementFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  reconciliationForm.fileName = file.name;
+  reconciliationForm.csv = await file.text();
+}
+
+function loadSampleSettlement() {
+  const settledAt = new Date().toISOString();
+  const payoutRows = (dashboard.value?.payouts ?? [])
+    .filter((payout) => payout.providerPayoutId)
+    .slice(0, 2)
+    .map((payout, index) =>
+      [
+        payout.providerPayoutId,
+        index === 0 ? payout.amountMinor : payout.amountMinor + 100,
+        payout.currency,
+        "paid",
+        settledAt
+      ].join(",")
+    );
+
+  reconciliationForm.fileName = "demo-settlement.csv";
+  reconciliationForm.csv = [
+    "provider_payout_id,amount_minor,currency,status,settled_at",
+    ...payoutRows,
+    ["provider_missing_demo", 1750, "USD", "paid", settledAt].join(",")
+  ].join("\n");
+}
+
+async function submitReconciliation() {
+  await store.createReconciliationImport(apiBaseUrl, devAdminToken, {
+    providerName: reconciliationForm.providerName,
+    fileName: reconciliationForm.fileName,
+    csv: reconciliationForm.csv
+  });
+
+  if (!error.value) {
+    reconciliationForm.fileName = "";
+    reconciliationForm.csv = "";
+    if (settlementFileInput.value) {
+      settlementFileInput.value.value = "";
+    }
+  }
+}
+
+async function selectReconciliationImport(importId: string) {
+  await store.selectReconciliationImport(apiBaseUrl, devAdminToken, importId);
+}
+
 async function replayWebhookDelivery(deliveryId: string) {
   await store.replayWebhookDelivery(apiBaseUrl, devAdminToken, deliveryId);
 }
@@ -254,6 +322,7 @@ function newIdempotencyKey(): string {
         <a class="nav-item" href="#clients">API Clients</a>
         <a class="nav-item" href="#payouts">Payouts</a>
         <a class="nav-item" href="#webhooks">Webhooks</a>
+        <a class="nav-item" href="#reconciliation">Reconciliation</a>
         <a class="nav-item" href="#audit">Audit</a>
       </nav>
     </aside>
@@ -323,6 +392,11 @@ function newIdempotencyKey(): string {
           <span>Webhook deliveries</span>
           <strong>{{ dashboard?.metrics.webhookDeliveries ?? 0 }}</strong>
           <small>{{ dashboard?.metrics.failedWebhookDeliveries ?? 0 }} need attention</small>
+        </article>
+        <article class="metric">
+          <span>Settlement imports</span>
+          <strong>{{ reconciliationImports.length }}</strong>
+          <small>{{ selectedReconciliation?.discrepancyCount ?? 0 }} discrepancies</small>
         </article>
       </section>
 
@@ -466,6 +540,44 @@ function newIdempotencyKey(): string {
           <button class="primary-button" :disabled="saving || !dashboard" type="submit">
             Register
           </button>
+        </form>
+
+        <form
+          id="reconciliation"
+          class="panel form-panel reconciliation-form"
+          @submit.prevent="submitReconciliation"
+        >
+          <header>
+            <h2>Import Settlement</h2>
+          </header>
+          <label>
+            <span>Provider</span>
+            <input v-model="reconciliationForm.providerName" required type="text">
+          </label>
+          <label>
+            <span>Settlement CSV</span>
+            <input
+              ref="settlementFileInput"
+              accept=".csv,text/csv"
+              type="file"
+              @change="handleSettlementFile"
+            >
+          </label>
+          <span v-if="reconciliationForm.fileName" class="file-selection">
+            {{ reconciliationForm.fileName }}
+          </span>
+          <div class="button-row">
+            <button class="secondary-button" type="button" @click="loadSampleSettlement">
+              Use sample
+            </button>
+            <button
+              class="primary-button"
+              :disabled="saving || !dashboard || !reconciliationForm.csv"
+              type="submit"
+            >
+              Import
+            </button>
+          </div>
         </form>
       </section>
 
@@ -658,6 +770,80 @@ function newIdempotencyKey(): string {
                 Replay
               </button>
             </div>
+          </div>
+        </article>
+
+        <article id="reconciliation-results" class="panel wide">
+          <header>
+            <h2>Settlement Imports</h2>
+          </header>
+          <div v-for="item in reconciliationImports" :key="item.id" class="row-item">
+            <div>
+              <strong>{{ item.fileName }}</strong>
+              <span>{{ item.providerName }} / {{ item.id }}</span>
+              <span>{{ item.matchedCount }} matched / {{ item.discrepancyCount }} discrepancies</span>
+            </div>
+            <div class="row-actions">
+              <small>{{ item.status }}</small>
+              <button
+                class="secondary-button compact-button"
+                type="button"
+                :disabled="loading"
+                @click="selectReconciliationImport(item.id)"
+              >
+                View
+              </button>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Reconciliation Discrepancies</h2>
+          </header>
+          <div
+            v-for="discrepancy in selectedReconciliation?.discrepancies"
+            :key="discrepancy.id"
+            class="row-item"
+          >
+            <div>
+              <strong>{{ discrepancy.type }} / {{ discrepancy.providerPayoutId }}</strong>
+              <span>{{ discrepancy.payoutId ?? "No matching payout" }}</span>
+              <span>
+                Expected
+                {{
+                  discrepancy.expectedAmountMinor === null
+                    ? "none"
+                    : formatMinor(
+                      discrepancy.expectedAmountMinor,
+                      discrepancy.expectedCurrency ?? discrepancy.actualCurrency
+                    )
+                }}
+                / received
+                {{ formatMinor(discrepancy.actualAmountMinor, discrepancy.actualCurrency) }}
+              </span>
+            </div>
+            <small>{{ discrepancy.status }}</small>
+          </div>
+          <p
+            v-if="selectedReconciliation && selectedReconciliation.discrepancies.length === 0"
+            class="empty-state"
+          >
+            No discrepancies
+          </p>
+        </article>
+
+        <article class="panel wide">
+          <header>
+            <h2>Settlement Rows</h2>
+          </header>
+          <div v-for="row in selectedReconciliation?.rows" :key="row.id" class="row-item">
+            <div>
+              <strong>{{ formatMinor(row.amountMinor, row.currency) }}</strong>
+              <span>{{ row.providerPayoutId }} / {{ row.payoutId ?? "unmatched" }}</span>
+              <span>{{ row.providerStatus }}</span>
+            </div>
+            <small>{{ row.matchStatus }}</small>
           </div>
         </article>
 

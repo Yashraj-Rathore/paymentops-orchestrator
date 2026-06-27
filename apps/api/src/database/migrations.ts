@@ -377,5 +377,94 @@ BEGIN
   CREATE INDEX ix_payout_approvals_tenant_status ON dbo.payout_approvals (tenant_id, status, created_at DESC);
 END;
 `
+  },
+  {
+    version: "006",
+    name: "reconciliation_baseline",
+    sql: `
+IF OBJECT_ID(N'dbo.settlement_imports', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.settlement_imports (
+    id UNIQUEIDENTIFIER NOT NULL CONSTRAINT pk_settlement_imports PRIMARY KEY DEFAULT NEWID(),
+    tenant_id UNIQUEIDENTIFIER NOT NULL,
+    external_id NVARCHAR(64) NOT NULL CONSTRAINT uq_settlement_imports_external_id UNIQUE,
+    provider_name NVARCHAR(128) NOT NULL,
+    file_name NVARCHAR(256) NOT NULL,
+    file_sha256 CHAR(64) NOT NULL,
+    status NVARCHAR(32) NOT NULL CONSTRAINT df_settlement_imports_status DEFAULT N'processing',
+    row_count INT NOT NULL CONSTRAINT df_settlement_imports_row_count DEFAULT 0,
+    matched_count INT NOT NULL CONSTRAINT df_settlement_imports_matched_count DEFAULT 0,
+    discrepancy_count INT NOT NULL CONSTRAINT df_settlement_imports_discrepancy_count DEFAULT 0,
+    imported_by_actor_type NVARCHAR(64) NOT NULL,
+    imported_by_actor_id NVARCHAR(256) NOT NULL,
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_settlement_imports_created_at DEFAULT SYSUTCDATETIME(),
+    completed_at DATETIME2(3) NULL,
+    CONSTRAINT fk_settlement_imports_tenant FOREIGN KEY (tenant_id) REFERENCES dbo.tenants(id),
+    CONSTRAINT uq_settlement_imports_tenant_hash UNIQUE (tenant_id, file_sha256),
+    CONSTRAINT ck_settlement_imports_status CHECK (status IN (N'processing', N'completed', N'failed')),
+    CONSTRAINT ck_settlement_imports_counts CHECK (row_count >= 0 AND matched_count >= 0 AND discrepancy_count >= 0)
+  );
+
+  CREATE INDEX ix_settlement_imports_tenant_created_at ON dbo.settlement_imports (tenant_id, created_at DESC);
+END;
+
+IF OBJECT_ID(N'dbo.settlement_rows', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.settlement_rows (
+    id UNIQUEIDENTIFIER NOT NULL CONSTRAINT pk_settlement_rows PRIMARY KEY DEFAULT NEWID(),
+    tenant_id UNIQUEIDENTIFIER NOT NULL,
+    settlement_import_id UNIQUEIDENTIFIER NOT NULL,
+    payout_id UNIQUEIDENTIFIER NULL,
+    provider_payout_id NVARCHAR(128) NOT NULL,
+    amount_minor BIGINT NOT NULL,
+    currency CHAR(3) NOT NULL,
+    provider_status NVARCHAR(64) NOT NULL,
+    settled_at DATETIME2(3) NULL,
+    match_status NVARCHAR(32) NOT NULL,
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_settlement_rows_created_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT fk_settlement_rows_tenant FOREIGN KEY (tenant_id) REFERENCES dbo.tenants(id),
+    CONSTRAINT fk_settlement_rows_import FOREIGN KEY (settlement_import_id) REFERENCES dbo.settlement_imports(id),
+    CONSTRAINT fk_settlement_rows_payout FOREIGN KEY (payout_id) REFERENCES dbo.payouts(id),
+    CONSTRAINT uq_settlement_rows_import_provider_id UNIQUE (settlement_import_id, provider_payout_id),
+    CONSTRAINT ck_settlement_rows_amount_positive CHECK (amount_minor > 0),
+    CONSTRAINT ck_settlement_rows_currency CHECK (currency LIKE '[A-Z][A-Z][A-Z]'),
+    CONSTRAINT ck_settlement_rows_match_status CHECK (match_status IN (N'matched', N'missing', N'amount_mismatch'))
+  );
+
+  CREATE INDEX ix_settlement_rows_import ON dbo.settlement_rows (settlement_import_id, created_at ASC);
+  CREATE INDEX ix_settlement_rows_tenant_match ON dbo.settlement_rows (tenant_id, match_status, created_at DESC);
+END;
+
+IF OBJECT_ID(N'dbo.reconciliation_discrepancies', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.reconciliation_discrepancies (
+    id UNIQUEIDENTIFIER NOT NULL CONSTRAINT pk_reconciliation_discrepancies PRIMARY KEY DEFAULT NEWID(),
+    external_id NVARCHAR(64) NOT NULL CONSTRAINT uq_reconciliation_discrepancies_external_id UNIQUE,
+    tenant_id UNIQUEIDENTIFIER NOT NULL,
+    settlement_import_id UNIQUEIDENTIFIER NOT NULL,
+    settlement_row_id UNIQUEIDENTIFIER NOT NULL,
+    payout_id UNIQUEIDENTIFIER NULL,
+    discrepancy_type NVARCHAR(32) NOT NULL,
+    status NVARCHAR(32) NOT NULL CONSTRAINT df_reconciliation_discrepancies_status DEFAULT N'open',
+    expected_amount_minor BIGINT NULL,
+    actual_amount_minor BIGINT NOT NULL,
+    expected_currency CHAR(3) NULL,
+    actual_currency CHAR(3) NOT NULL,
+    created_at DATETIME2(3) NOT NULL CONSTRAINT df_reconciliation_discrepancies_created_at DEFAULT SYSUTCDATETIME(),
+    resolved_at DATETIME2(3) NULL,
+    resolved_by_actor_id NVARCHAR(256) NULL,
+    CONSTRAINT fk_reconciliation_discrepancies_tenant FOREIGN KEY (tenant_id) REFERENCES dbo.tenants(id),
+    CONSTRAINT fk_reconciliation_discrepancies_import FOREIGN KEY (settlement_import_id) REFERENCES dbo.settlement_imports(id),
+    CONSTRAINT fk_reconciliation_discrepancies_row FOREIGN KEY (settlement_row_id) REFERENCES dbo.settlement_rows(id),
+    CONSTRAINT fk_reconciliation_discrepancies_payout FOREIGN KEY (payout_id) REFERENCES dbo.payouts(id),
+    CONSTRAINT uq_reconciliation_discrepancies_row UNIQUE (settlement_row_id),
+    CONSTRAINT ck_reconciliation_discrepancies_type CHECK (discrepancy_type IN (N'missing', N'amount_mismatch')),
+    CONSTRAINT ck_reconciliation_discrepancies_status CHECK (status IN (N'open', N'resolved')),
+    CONSTRAINT ck_reconciliation_discrepancies_actual_amount CHECK (actual_amount_minor > 0)
+  );
+
+  CREATE INDEX ix_reconciliation_discrepancies_tenant_status ON dbo.reconciliation_discrepancies (tenant_id, status, created_at DESC);
+END;
+`
   }
 ];

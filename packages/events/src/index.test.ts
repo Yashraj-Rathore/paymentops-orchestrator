@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   createWebhookSignature,
@@ -11,6 +11,10 @@ import {
 describe("paymentOpsTopics", () => {
   it("keeps payout created topic versioned", () => {
     expect(paymentOpsTopics.payoutCreated).toBe("paymentops.payout.created.v1");
+  });
+
+  it("keeps reconciliation completion topic versioned", () => {
+    expect(paymentOpsTopics.reconciliationCompleted).toBe("paymentops.reconciliation.completed.v1");
   });
 });
 

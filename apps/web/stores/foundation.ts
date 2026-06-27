@@ -10,6 +10,9 @@ import type {
   CreateWebhookEndpointRequest,
   CreateWebhookEndpointResponse,
   ReplayWebhookDeliveryResponse,
+  ReconciliationImportDetails,
+  ReconciliationImportSummary,
+  CreateReconciliationImportRequest,
   TenantDashboardResponse,
   TenantSummary
 } from "@paymentops/contracts";
@@ -23,6 +26,8 @@ interface FoundationState {
   lastCreatedPayout: CreatePayoutResponse | null;
   lastApprovalDecision: ApprovalDecisionResponse | null;
   lastReplayedDelivery: ReplayWebhookDeliveryResponse | null;
+  reconciliationImports: ReconciliationImportSummary[];
+  selectedReconciliation: ReconciliationImportDetails | null;
   saving: boolean;
   loading: boolean;
   message: string | null;
@@ -38,6 +43,8 @@ export const useFoundationStore = defineStore("foundation", {
     lastCreatedPayout: null,
     lastApprovalDecision: null,
     lastReplayedDelivery: null,
+    reconciliationImports: [],
+    selectedReconciliation: null,
     saving: false,
     loading: false,
     message: null,
@@ -60,7 +67,11 @@ export const useFoundationStore = defineStore("foundation", {
         this.dashboard = await $fetch<TenantDashboardResponse>(`${apiBaseUrl}${path}`, {
           headers: adminHeaders(devAdminToken)
         });
+        if (this.activeTenantId && this.activeTenantId !== this.dashboard.tenant.id) {
+          this.selectedReconciliation = null;
+        }
         this.activeTenantId = this.dashboard.tenant.id;
+        await this.loadReconciliation(apiBaseUrl, devAdminToken, this.dashboard.tenant.id);
       } catch (error) {
         this.error = error instanceof Error ? error.message : "Unable to load dashboard";
       } finally {
@@ -204,6 +215,51 @@ export const useFoundationStore = defineStore("foundation", {
           }
         );
         this.message = `Rejected payout ${payoutId}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async loadReconciliation(apiBaseUrl: string, devAdminToken: string, tenantId: string) {
+      this.reconciliationImports = await $fetch<ReconciliationImportSummary[]>(
+        `${apiBaseUrl}/v1/tenants/${tenantId}/reconciliation/imports`,
+        { headers: adminHeaders(devAdminToken) }
+      );
+
+      const selectedId =
+        this.selectedReconciliation?.id ?? this.reconciliationImports[0]?.id ?? null;
+      this.selectedReconciliation = selectedId
+        ? await $fetch<ReconciliationImportDetails>(
+            `${apiBaseUrl}/v1/tenants/${tenantId}/reconciliation/imports/${selectedId}`,
+            { headers: adminHeaders(devAdminToken) }
+          )
+        : null;
+    },
+
+    async selectReconciliationImport(apiBaseUrl: string, devAdminToken: string, importId: string) {
+      const tenantId = requireTenantId(this.dashboard);
+      this.selectedReconciliation = await $fetch<ReconciliationImportDetails>(
+        `${apiBaseUrl}/v1/tenants/${tenantId}/reconciliation/imports/${importId}`,
+        { headers: adminHeaders(devAdminToken) }
+      );
+    },
+
+    async createReconciliationImport(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      body: CreateReconciliationImportRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+
+      await this.mutate(async () => {
+        this.selectedReconciliation = await $fetch<ReconciliationImportDetails>(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/reconciliation/imports`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
+        this.message = `Reconciled ${this.selectedReconciliation.matchedCount} of ${this.selectedReconciliation.rowCount} rows`;
         await this.load(apiBaseUrl, devAdminToken, tenantId);
       });
     },
