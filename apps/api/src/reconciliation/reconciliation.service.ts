@@ -5,6 +5,7 @@ import type {
   ReconciliationImportDetails,
   ReconciliationImportSummary
 } from "@paymentops/contracts";
+import { recordPaymentOperation } from "@paymentops/observability";
 import { parse } from "csv-parse/sync";
 import { createHash, randomBytes } from "node:crypto";
 
@@ -41,7 +42,7 @@ export class ReconciliationService {
     );
   }
 
-  createImport(
+  async createImport(
     tenantId: string,
     body: CreateReconciliationImportRequest,
     principal?: AuthenticatedPrincipal
@@ -55,7 +56,7 @@ export class ReconciliationService {
     const rows = parseSettlementCsv(csv);
     const actor = reconciliationActor(principal);
 
-    return this.repository.createImport({
+    const reconciliation = await this.repository.createImport({
       tenantExternalId: requiredString(tenantId, "tenantId"),
       externalId: externalId("rec"),
       providerName: limitedString(body.providerName, "providerName", 128),
@@ -65,6 +66,12 @@ export class ReconciliationService {
       actorId: actor.id,
       rows
     });
+
+    recordPaymentOperation("reconciliation.completed", {
+      "paymentops.reconciliation.rows": reconciliation.rowCount,
+      "paymentops.reconciliation.discrepancies": reconciliation.discrepancyCount
+    });
+    return reconciliation;
   }
 }
 

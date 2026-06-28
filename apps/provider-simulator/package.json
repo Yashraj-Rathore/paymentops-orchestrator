@@ -19,6 +19,7 @@
     "@paymentops/config": "workspace:*",
     "@paymentops/contracts": "workspace:*",
     "@paymentops/logger": "workspace:*",
+    "@paymentops/observability": "workspace:*",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   }

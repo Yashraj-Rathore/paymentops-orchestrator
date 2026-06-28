@@ -5,6 +5,7 @@ import type {
   ProviderPayoutResponse
 } from "@paymentops/contracts";
 import { createLogger } from "@paymentops/logger";
+import { recordPaymentOperation } from "@paymentops/observability";
 import { randomBytes } from "node:crypto";
 
 const callbackDelayMs = 1500;
@@ -20,7 +21,8 @@ export class ProviderPayoutsService {
     const request = normalizeRequest(body);
     const providerPayoutId = `pp_${randomBytes(8).toString("hex")}`;
     const finalStatus = request.amountMinor >= 5_000_000 ? "failed" : "paid";
-    const reason = finalStatus === "paid" ? "simulated provider settlement" : "simulated provider risk decline";
+    const reason =
+      finalStatus === "paid" ? "simulated provider settlement" : "simulated provider risk decline";
 
     setTimeout(() => {
       void this.sendCallback(request.callbackUrl, {
@@ -32,6 +34,10 @@ export class ProviderPayoutsService {
       });
     }, callbackDelayMs);
 
+    recordPaymentOperation("provider.payout_accepted", {
+      "paymentops.provider.final_status": finalStatus
+    });
+
     return {
       providerPayoutId,
       status: "processing",
@@ -39,7 +45,10 @@ export class ProviderPayoutsService {
     };
   }
 
-  private async sendCallback(callbackUrl: string, payload: ProviderPayoutCallbackRequest): Promise<void> {
+  private async sendCallback(
+    callbackUrl: string,
+    payload: ProviderPayoutCallbackRequest
+  ): Promise<void> {
     try {
       const response = await fetch(callbackUrl, {
         method: "POST",

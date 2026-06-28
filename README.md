@@ -2,7 +2,7 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, append-only ledger entries, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, and reconciliation baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, and a usable dashboard shell.
+The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, reconciliation, and observability baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, OpenTelemetry traces and metrics, correlated structured logs, and a usable dashboard shell.
 
 ## Workspace
 
@@ -16,7 +16,8 @@ packages/
   config/               Shared environment validation and .env loading
   contracts/            Shared API and event contracts
   events/               Event envelope helpers and topic names
-  logger/               Structured JSON logger
+  logger/               Trace-correlated structured JSON logger
+  observability/        OpenTelemetry SDK, OTLP exporters, request metrics, and correlation context
   testing/              Test helpers
   ui/                   Shared UI tokens
 infra/terraform/        AWS staging scaffolding
@@ -60,6 +61,7 @@ Local URLs:
 - Web dashboard: `http://localhost:3001`
 - Provider simulator: `http://localhost:3003`
 - Redpanda Console: `http://localhost:8080`
+- Prometheus metrics: `http://localhost:8889/metrics`
 
 ## Scripts
 
@@ -187,13 +189,21 @@ Each import is hashed to prevent duplicate processing and reconciled transaction
 
 The dashboard includes a sample CSV generator, import history, row-level results, and discrepancy details.
 
+## Observability Baseline
+
+The API, worker, and provider simulator initialize OpenTelemetry before loading NestJS. Automatic Node.js instrumentation exports distributed HTTP traces through OTLP, while the shared middleware records request counts and latency histograms. Payment operations emit the `paymentops.operation.count` counter for payout, approval, reconciliation, provider dispatch, and webhook outcomes.
+
+Incoming HTTP requests preserve or create an `x-correlation-id` header. Structured logs automatically include the active trace and correlation identifiers, making synchronous HTTP chains easy to correlate. Worker payout and webhook jobs create dedicated spans so each asynchronous operation is independently traceable.
+
+The local collector prints trace summaries and exposes OTLP metrics in Prometheus format at `http://localhost:8889/metrics`. Set `OTEL_SDK_DISABLED=true` to disable SDK initialization.
+
 ## Acceptance Criteria
 
 - `apps/api` exposes health, Swagger, protected tenant operations, API client creation, one-time API key minting, webhook registration, webhook delivery replay, demo dashboard data, Auth0 JWT validation, API-key session introspection, idempotent payout creation, provider callbacks, and payout status transitions.
 - `apps/web` can create tenants, API clients, one-time API keys, webhook endpoints, API-key-backed payouts, payout dispatch status, webhook delivery status, webhook replays, settlement imports, and reconciliation discrepancies from the dashboard shell.
 - `apps/provider-simulator` exposes `GET /health` and Swagger at `/docs`.
 - Shared packages compile under strict TypeScript.
-- Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, OpenTelemetry Collector, and all app services.
+- Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, an OTLP collector with Prometheus metrics, and all app services.
 - GitHub Actions runs install, lint, typecheck, tests, and `docker compose config`.
 
 ## Delivery Roadmap

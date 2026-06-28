@@ -1,44 +1,19 @@
 import "reflect-metadata";
 
-import { NestFactory } from "@nestjs/core";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { loadConfig } from "@paymentops/config";
-import { createLogger } from "@paymentops/logger";
+import { startObservability } from "@paymentops/observability";
 
-import { AppModule } from "./app.module.js";
-
-async function bootstrap() {
+async function main(): Promise<void> {
   const config = loadConfig("provider-simulator");
-  const logger = createLogger({
-    service: config.serviceName,
-    environment: config.nodeEnv
+  startObservability({
+    serviceName: config.serviceName,
+    serviceVersion: "0.1.0",
+    environment: config.nodeEnv,
+    otlpEndpoint: config.otelExporterOtlpEndpoint
   });
 
-  const app = await NestFactory.create(AppModule, {
-    bufferLogs: true
-  });
-
-  app.enableCors();
-  app.setGlobalPrefix("v1", {
-    exclude: ["health", "docs", "docs-json"]
-  });
-
-  const openApiConfig = new DocumentBuilder()
-    .setTitle("PaymentOps Provider Simulator")
-    .setDescription("Foundation simulator for external payment rail behavior.")
-    .setVersion("0.1.0")
-    .build();
-
-  const document = SwaggerModule.createDocument(app, openApiConfig);
-  SwaggerModule.setup("docs", app, document);
-
-  await app.listen(config.port);
-
-  logger.info("provider simulator started", {
-    resourceType: "service",
-    resourceId: config.serviceName,
-    port: config.port
-  });
+  const { bootstrapProviderSimulator } = await import("./bootstrap.js");
+  await bootstrapProviderSimulator(config);
 }
 
-void bootstrap();
+void main();

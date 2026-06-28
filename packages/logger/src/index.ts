@@ -1,3 +1,5 @@
+import { context, isSpanContextValid, propagation, trace } from "@opentelemetry/api";
+
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 
 export interface LogContext {
@@ -36,6 +38,7 @@ export function createLogger(options: LoggerOptions): PaymentOpsLogger {
         service: options.service,
         environment: options.environment,
         message,
+        ...activeTelemetryContext(),
         ...context
       })
     );
@@ -48,5 +51,17 @@ export function createLogger(options: LoggerOptions): PaymentOpsLogger {
     warn: (message, context) => write("warn", message, context),
     error: (message, context) => write("error", message, context),
     fatal: (message, context) => write("fatal", message, context)
+  };
+}
+function activeTelemetryContext(): Pick<LogContext, "traceId" | "correlationId"> {
+  const activeContext = context.active();
+  const spanContext = trace.getSpanContext(activeContext);
+  const correlationId = propagation
+    .getBaggage(activeContext)
+    ?.getEntry("paymentops.correlation_id")?.value;
+
+  return {
+    ...(spanContext && isSpanContextValid(spanContext) ? { traceId: spanContext.traceId } : {}),
+    ...(correlationId ? { correlationId } : {})
   };
 }

@@ -18,6 +18,7 @@
     "@paymentops/contracts": "workspace:*",
     "@paymentops/events": "workspace:*",
     "@paymentops/logger": "workspace:*",
+    "@paymentops/observability": "workspace:*",
     "mssql": "^12.2.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"

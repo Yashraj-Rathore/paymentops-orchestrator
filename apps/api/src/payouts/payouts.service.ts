@@ -5,6 +5,7 @@ import type {
   PayoutDetailsResponse,
   PayoutSummary
 } from "@paymentops/contracts";
+import { recordPaymentOperation } from "@paymentops/observability";
 import { createHash, randomBytes } from "node:crypto";
 
 import type { AuthenticatedPrincipal } from "../auth/auth.types.js";
@@ -26,7 +27,7 @@ export class PayoutsService {
     const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
     const normalized = normalizeCreatePayoutRequest(body);
 
-    return this.repository.createPayout({
+    const payout = await this.repository.createPayout({
       tenantExternalId: tenantId,
       externalId: externalId("po"),
       idempotencyKey: normalizedIdempotencyKey,
@@ -39,6 +40,12 @@ export class PayoutsService {
       apiClientExternalId: principal?.apiClientId ?? null,
       apiKeyExternalId: principal?.apiKeyId ?? null
     });
+
+    recordPaymentOperation("payout.created", {
+      "paymentops.payout.status": payout.status,
+      "paymentops.idempotency.replayed": payout.replayed
+    });
+    return payout;
   }
 
   async listPayouts(

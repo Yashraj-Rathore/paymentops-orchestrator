@@ -4,6 +4,7 @@ import type {
   ApprovalDecisionResponse,
   PayoutApprovalSummary
 } from "@paymentops/contracts";
+import { recordPaymentOperation } from "@paymentops/observability";
 
 import type { AuthenticatedPrincipal } from "../auth/auth.types.js";
 import { ApprovalsRepository } from "./approvals.repository.js";
@@ -22,7 +23,7 @@ export class ApprovalsService {
     body: ApprovalDecisionRequest,
     principal?: AuthenticatedPrincipal
   ): Promise<ApprovalDecisionResponse> {
-    return this.repository.decideApproval({
+    const approval = await this.repository.decideApproval({
       tenantExternalId: tenantId,
       payoutExternalId: payoutId,
       decision: "approved",
@@ -30,6 +31,9 @@ export class ApprovalsService {
       actorType: principal?.type ?? "dev_admin",
       actorId: principal?.email ?? principal?.subject ?? "paymentops-api"
     });
+
+    recordPaymentOperation("payout.approved");
+    return approval;
   }
 
   async rejectPayout(
@@ -38,7 +42,7 @@ export class ApprovalsService {
     body: ApprovalDecisionRequest,
     principal?: AuthenticatedPrincipal
   ): Promise<ApprovalDecisionResponse> {
-    return this.repository.decideApproval({
+    const approval = await this.repository.decideApproval({
       tenantExternalId: tenantId,
       payoutExternalId: payoutId,
       decision: "rejected",
@@ -46,6 +50,9 @@ export class ApprovalsService {
       actorType: principal?.type ?? "dev_admin",
       actorId: principal?.email ?? principal?.subject ?? "paymentops-api"
     });
+
+    recordPaymentOperation("payout.rejected");
+    return approval;
   }
 }
 

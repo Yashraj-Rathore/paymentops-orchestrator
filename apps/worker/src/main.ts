@@ -1,27 +1,19 @@
 import "reflect-metadata";
 
-import { NestFactory } from "@nestjs/core";
 import { loadConfig } from "@paymentops/config";
-import { createLogger } from "@paymentops/logger";
+import { startObservability } from "@paymentops/observability";
 
-import { AppModule } from "./app.module.js";
-
-async function bootstrap() {
+async function main(): Promise<void> {
   const config = loadConfig("worker");
-  const logger = createLogger({
-    service: config.serviceName,
-    environment: config.nodeEnv
+  startObservability({
+    serviceName: config.serviceName,
+    serviceVersion: "0.1.0",
+    environment: config.nodeEnv,
+    otlpEndpoint: config.otelExporterOtlpEndpoint
   });
 
-  await NestFactory.createApplicationContext(AppModule, {
-    bufferLogs: true
-  });
-
-  logger.info("worker started", {
-    resourceType: "service",
-    resourceId: config.serviceName,
-    redpandaBrokers: config.redpandaBrokers
-  });
+  const { bootstrapWorker } = await import("./bootstrap.js");
+  await bootstrapWorker(config);
 }
 
-void bootstrap();
+void main();

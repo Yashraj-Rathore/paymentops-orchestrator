@@ -1,50 +1,19 @@
 import "reflect-metadata";
 
-import { NestFactory } from "@nestjs/core";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { loadConfig } from "@paymentops/config";
-import { createLogger } from "@paymentops/logger";
+import { startObservability } from "@paymentops/observability";
 
-import { AppModule } from "./app.module.js";
-import { DatabaseInitializer } from "./database/database.initializer.js";
-import { OperationsService } from "./operations/operations.service.js";
-
-async function bootstrap() {
+async function main(): Promise<void> {
   const config = loadConfig("api");
-  const logger = createLogger({
-    service: config.serviceName,
-    environment: config.nodeEnv
+  startObservability({
+    serviceName: config.serviceName,
+    serviceVersion: "0.1.0",
+    environment: config.nodeEnv,
+    otlpEndpoint: config.otelExporterOtlpEndpoint
   });
 
-  const app = await NestFactory.create(AppModule, {
-    bufferLogs: true
-  });
-
-  await app.get(DatabaseInitializer).initialize();
-  await app.get(OperationsService).seedDemo();
-
-  app.enableCors();
-  app.setGlobalPrefix("v1", {
-    exclude: ["health", "docs", "docs-json"]
-  });
-
-  const openApiConfig = new DocumentBuilder()
-    .setTitle("PaymentOps Orchestrator API")
-    .setDescription("Foundation API for the payment operations simulator.")
-    .setVersion("0.1.0")
-    .addBearerAuth()
-    .build();
-
-  const document = SwaggerModule.createDocument(app, openApiConfig);
-  SwaggerModule.setup("docs", app, document);
-
-  await app.listen(config.port);
-
-  logger.info("api started", {
-    resourceType: "service",
-    resourceId: config.serviceName,
-    port: config.port
-  });
+  const { bootstrapApi } = await import("./bootstrap.js");
+  await bootstrapApi(config);
 }
 
-void bootstrap();
+void main();

@@ -2,8 +2,12 @@ import { Inject, Injectable, OnApplicationShutdown, OnModuleInit } from "@nestjs
 import type { MerchantWebhookEnvelope } from "@paymentops/contracts";
 import { createWebhookSignatureHeaders } from "@paymentops/events";
 import { createLogger } from "@paymentops/logger";
+import { recordPaymentOperation, withActiveSpan } from "@paymentops/observability";
 
-import { WebhookDeliveryRepository, type PendingWebhookDelivery } from "./webhook-delivery.repository.js";
+import {
+  WebhookDeliveryRepository,
+  type PendingWebhookDelivery
+} from "./webhook-delivery.repository.js";
 
 const pollIntervalMs = 3000;
 const maxDeliveryAttempts = 5;
@@ -11,11 +15,16 @@ const webhookTimeoutMs = 5000;
 
 @Injectable()
 export class WebhookDeliveryService implements OnModuleInit, OnApplicationShutdown {
-  private readonly logger = createLogger({ service: "worker", environment: process.env.NODE_ENV ?? "development" });
+  private readonly logger = createLogger({
+    service: "worker",
+    environment: process.env.NODE_ENV ?? "development"
+  });
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
-  constructor(@Inject(WebhookDeliveryRepository) private readonly repository: WebhookDeliveryRepository) {}
+  constructor(
+    @Inject(WebhookDeliveryRepository) private readonly repository: WebhookDeliveryRepository
+  ) {}
 
   onModuleInit(): void {
     this.timer = setInterval(() => {
@@ -44,7 +53,11 @@ export class WebhookDeliveryService implements OnModuleInit, OnApplicationShutdo
       const deliveries = await this.repository.findSendableDeliveries();
 
       for (const delivery of deliveries) {
-        await this.sendDelivery(delivery);
+        await withActiveSpan(
+          "paymentops.webhook.deliver",
+          { "paymentops.webhook.delivery_id": delivery.deliveryExternalId },
+          () => this.sendDelivery(delivery)
+        );
       }
     } finally {
       this.running = false;
@@ -92,6 +105,7 @@ export class WebhookDeliveryService implements OnModuleInit, OnApplicationShutdo
           eventType: delivery.eventType,
           statusCode: response.status
         });
+        recordPaymentOperation("webhook.delivered");
         return;
       }
 
@@ -124,7 +138,9 @@ export class WebhookDeliveryService implements OnModuleInit, OnApplicationShutdo
     }
   ): Promise<void> {
     const deadLetter = failure.attemptNumber >= maxDeliveryAttempts;
-    const nextAttemptAt = deadLetter ? null : new Date(Date.now() + retryBackoffMs(failure.attemptNumber));
+    const nextAttemptAt = deadLetter
+      ? null
+      : new Date(Date.now() + retryBackoffMs(failure.attemptNumber));
 
     await this.repository.recordDeliveryFailed({
       deliveryId: delivery.deliveryId,
@@ -148,6 +164,7 @@ export class WebhookDeliveryService implements OnModuleInit, OnApplicationShutdo
       deadLetter,
       error: failure.errorMessage
     });
+    recordPaymentOperation(deadLetter ? "webhook.dead_lettered" : "webhook.failed");
   }
 }
 
@@ -167,7 +184,9 @@ function buildWebhookPayload(delivery: PendingWebhookDelivery): string {
 
 function parsePayload(payloadJson: string): Record<string, unknown> {
   const payload = JSON.parse(payloadJson) as unknown;
-  return payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
+  return payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : {};
 }
 
 function retryBackoffMs(attemptNumber: number): number {
