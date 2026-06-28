@@ -9,8 +9,10 @@ COPY apps ./apps
 COPY packages ./packages
 
 RUN pnpm install --frozen-lockfile
-RUN pnpm build:packages
+RUN pnpm build
+
+ENV NODE_ENV=production
 
 EXPOSE 3000 3001 3002 3003
 
-CMD ["pnpm", "dev"]
+CMD ["node", "apps/api/dist/main.js"]

@@ -33,7 +33,8 @@ Thumbs.db
 **/.terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
+*.tfvars
+backend.hcl
 
 # Docker/runtime
 tmp/

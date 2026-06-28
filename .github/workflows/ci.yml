@@ -42,3 +42,34 @@ jobs:
 
       - name: Validate Compose
         run: docker compose config
+
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.7
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Initialize development environment
+        working-directory: infra/terraform/envs/dev
+        run: terraform init -backend=false
+
+      - name: Validate development environment
+        working-directory: infra/terraform/envs/dev
+        run: terraform validate
+
+      - name: Initialize staging environment
+        working-directory: infra/terraform/envs/staging
+        run: terraform init -backend=false
+
+      - name: Validate staging environment
+        working-directory: infra/terraform/envs/staging
+        run: terraform validate

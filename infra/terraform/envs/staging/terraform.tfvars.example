@@ -1,0 +1,18 @@
+aws_region     = "ca-central-1"
+project_name   = "paymentops"
+environment    = "staging"
+deploy_services = false
+create_database = false
+use_fargate_spot = true
+
+# Set these to the real Auth0 API settings before enabling services.
+auth0_domain   = "your-tenant.us.auth0.com"
+auth0_audience = "https://api.paymentops.example"
+
+# To reuse an existing database, leave create_database=false and provide a
+# Secrets Manager secret containing the complete DATABASE_URL value.
+# database_url_secret_arn = "arn:aws:secretsmanager:ca-central-1:123456789012:secret:paymentops-staging/database-url-AbCdEf"
+
+# After pushing the workspace image to the output ECR repository:
+# deploy_services = true
+# image_tag        = "<git-sha>"

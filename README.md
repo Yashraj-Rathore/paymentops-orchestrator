@@ -2,7 +2,7 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, append-only ledger entries, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, reconciliation, and observability baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, OpenTelemetry traces and metrics, correlated structured logs, and a usable dashboard shell.
+The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, reconciliation, and observability baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, OpenTelemetry traces and metrics, correlated structured logs, a usable dashboard shell, and a no-apply AWS ECS/Fargate staging baseline.
 
 ## Workspace
 
@@ -20,7 +20,7 @@ packages/
   observability/        OpenTelemetry SDK, OTLP exporters, request metrics, and correlation context
   testing/              Test helpers
   ui/                   Shared UI tokens
-infra/terraform/        AWS staging scaffolding
+infra/terraform/        AWS staging infrastructure and reusable Terraform modules
 docs/                   Architecture notes, API notes, and ADRs
 ```
 
@@ -30,6 +30,7 @@ docs/                   Architecture notes, API notes, and ADRs
 - pnpm 10
 - Docker Desktop
 - GitHub CLI for the publish workflow
+- Terraform 1.8+ and AWS CLI v2 for staging infrastructure
 
 ## Local Setup
 
@@ -204,7 +205,8 @@ The local collector prints trace summaries and exposes OTLP metrics in Prometheu
 - `apps/provider-simulator` exposes `GET /health` and Swagger at `/docs`.
 - Shared packages compile under strict TypeScript.
 - Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, an OTLP collector with Prometheus metrics, and all app services.
-- GitHub Actions runs install, lint, typecheck, tests, and `docker compose config`.
+- GitHub Actions runs install, lint, typecheck, tests, build, Compose validation, and Terraform format/validation checks.
+- Terraform defines the staging VPC, ALB, ECR, ECS/Fargate services, Service Connect, CloudWatch logs, IAM, Secrets Manager integration, and optional SQL Server.
 
 ## Delivery Roadmap
 
