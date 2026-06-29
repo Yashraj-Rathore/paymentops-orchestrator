@@ -1,4 +1,4 @@
-﻿import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import type { WebhookDeliveryStatus } from "@paymentops/contracts";
 import sql from "mssql";
 
@@ -50,10 +50,9 @@ export class WebhookDeliveryRepository {
 
   async scheduleMissingDeliveries(limit = 25): Promise<number> {
     const pool = await this.database.connect();
-    const result = await pool
-      .request()
-      .input("limit", sql.Int, limit)
-      .query<{ external_id: string }>(`
+    const result = await pool.request().input("limit", sql.Int, limit).query<{
+      external_id: string;
+    }>(`
 INSERT INTO dbo.webhook_deliveries (
   external_id,
   tenant_id,
@@ -66,7 +65,7 @@ INSERT INTO dbo.webhook_deliveries (
 )
 OUTPUT inserted.external_id
 SELECT TOP (@limit)
-  CONCAT(N'whd_', REPLACE(CONVERT(NVARCHAR(36), NEWID()), N'-', N'')) AS external_id,
+  CONCAT(N'whd_', REPLACE(CONVERT(NVARCHAR(36), NEWID()), N'-', N'')),
   outbox_events.tenant_id,
   webhook_endpoints.id,
   outbox_events.id,
@@ -97,13 +96,190 @@ ORDER BY outbox_events.created_at ASC;
     return result.recordset.length;
   }
 
-  async findSendableDeliveries(limit = 10): Promise<PendingWebhookDelivery[]> {
+  async findUnqueuedDeliveries(limit = 25): Promise<PendingWebhookDelivery[]> {
+    const pool = await this.database.connect();
+    const result = await pool.request().input("limit", sql.Int, limit)
+      .query<PendingWebhookDeliveryRow>(`
+${deliverySelect}
+WHERE webhook_deliveries.status IN (N'pending', N'failed')
+  AND webhook_endpoints.status = N'active'
+  AND webhook_deliveries.queue_job_id IS NULL
+  AND webhook_deliveries.next_attempt_at <= SYSUTCDATETIME()
+ORDER BY webhook_deliveries.next_attempt_at ASC, webhook_deliveries.created_at ASC;
+`);
+
+    return result.recordset.map(mapDelivery);
+  }
+
+  async findDeliveryByExternalId(
+    deliveryExternalId: string
+  ): Promise<PendingWebhookDelivery | null> {
     const pool = await this.database.connect();
     const result = await pool
       .request()
-      .input("limit", sql.Int, limit)
+      .input("deliveryExternalId", sql.NVarChar(64), deliveryExternalId)
       .query<PendingWebhookDeliveryRow>(`
-SELECT TOP (@limit)
+${deliverySelect}
+WHERE webhook_deliveries.external_id = @deliveryExternalId;
+`);
+
+    const row = result.recordset[0];
+    return row ? mapDelivery(row) : null;
+  }
+
+  async reserveQueueJob(deliveryId: string, jobId: string): Promise<boolean> {
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("deliveryId", sql.UniqueIdentifier, deliveryId)
+      .input("jobId", sql.NVarChar(128), jobId).query<{ id: string }>(`
+UPDATE dbo.webhook_deliveries
+SET queue_job_id = @jobId,
+    queued_at = SYSUTCDATETIME(),
+    updated_at = SYSUTCDATETIME()
+OUTPUT inserted.id
+WHERE id = @deliveryId
+  AND queue_job_id IS NULL
+  AND status IN (N'pending', N'failed');
+`);
+
+    return result.recordset.length > 0;
+  }
+
+  async releaseQueueJob(deliveryId: string, jobId: string): Promise<void> {
+    const pool = await this.database.connect();
+    await pool
+      .request()
+      .input("deliveryId", sql.UniqueIdentifier, deliveryId)
+      .input("jobId", sql.NVarChar(128), jobId).query(`
+UPDATE dbo.webhook_deliveries
+SET queue_job_id = NULL,
+    queued_at = NULL,
+    updated_at = SYSUTCDATETIME()
+WHERE id = @deliveryId AND queue_job_id = @jobId;
+`);
+  }
+
+  async recordDeliverySucceeded(input: WebhookDeliverySuccessInput): Promise<void> {
+    const pool = await this.database.connect();
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      await insertAttempt(transaction, {
+        deliveryId: input.deliveryId,
+        attemptNumber: input.attemptNumber,
+        statusCode: input.statusCode,
+        responseBody: input.responseBody,
+        errorMessage: null,
+        durationMs: input.durationMs
+      });
+
+      await new sql.Request(transaction)
+        .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
+        .input("attemptNumber", sql.Int, input.attemptNumber)
+        .input("statusCode", sql.Int, input.statusCode).query(`
+UPDATE dbo.webhook_deliveries
+SET status = N'delivered',
+    attempts = @attemptNumber,
+    last_attempted_at = SYSUTCDATETIME(),
+    delivered_at = SYSUTCDATETIME(),
+    next_attempt_at = NULL,
+    last_status_code = @statusCode,
+    last_error = NULL,
+    updated_at = SYSUTCDATETIME()
+WHERE id = @deliveryId AND status IN (N'pending', N'failed');
+`);
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  async recordDeliveryFailed(input: WebhookDeliveryFailureInput): Promise<void> {
+    const pool = await this.database.connect();
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      await insertAttempt(transaction, {
+        deliveryId: input.deliveryId,
+        attemptNumber: input.attemptNumber,
+        statusCode: input.statusCode,
+        responseBody: input.responseBody,
+        errorMessage: input.errorMessage,
+        durationMs: input.durationMs
+      });
+
+      const updated = await new sql.Request(transaction)
+        .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
+        .input("attemptNumber", sql.Int, input.attemptNumber)
+        .input("status", sql.NVarChar(32), input.deadLetter ? "dead_letter" : "failed")
+        .input("nextAttemptAt", sql.DateTime2, input.nextAttemptAt)
+        .input("statusCode", sql.Int, input.statusCode)
+        .input("errorMessage", sql.NVarChar(1000), input.errorMessage).query<{ id: string }>(`
+UPDATE dbo.webhook_deliveries
+SET status = @status,
+    attempts = @attemptNumber,
+    last_attempted_at = SYSUTCDATETIME(),
+    next_attempt_at = @nextAttemptAt,
+    last_status_code = @statusCode,
+    last_error = @errorMessage,
+    updated_at = SYSUTCDATETIME()
+OUTPUT inserted.id
+WHERE id = @deliveryId AND status IN (N'pending', N'failed');
+`);
+
+      if (input.deadLetter && updated.recordset.length > 0) {
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
+          .input("eventType", sql.NVarChar(128), "webhook.dead_lettered.v1")
+          .input("aggregateType", sql.NVarChar(64), "webhook_delivery")
+          .input("aggregateId", sql.NVarChar(64), input.deliveryExternalId)
+          .input(
+            "payloadJson",
+            sql.NVarChar(sql.MAX),
+            JSON.stringify({
+              deliveryId: input.deliveryExternalId,
+              eventType: input.eventType,
+              attempts: input.attemptNumber,
+              error: input.errorMessage
+            })
+          ).query(`
+INSERT INTO dbo.outbox_events (tenant_id, event_type, aggregate_type, aggregate_id, payload_json)
+VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
+`);
+
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
+          .input("resourceId", sql.NVarChar(128), input.deliveryExternalId)
+          .input(
+            "metadataJson",
+            sql.NVarChar(sql.MAX),
+            JSON.stringify({ eventType: input.eventType })
+          ).query(`
+INSERT INTO dbo.audit_logs (
+  tenant_id, actor_type, actor_id, action, resource_type, resource_id, metadata_json
+)
+VALUES (
+  @tenantId, N'system', N'paymentops-worker', N'webhook_delivery.dead_lettered',
+  N'webhook_delivery', @resourceId, @metadataJson
+);
+`);
+      }
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+}
+
+const deliverySelect = `
+SELECT
   webhook_deliveries.id AS delivery_id,
   webhook_deliveries.external_id AS delivery_external_id,
   webhook_endpoints.external_id AS webhook_endpoint_external_id,
@@ -122,172 +298,51 @@ SELECT TOP (@limit)
 FROM dbo.webhook_deliveries
 INNER JOIN dbo.webhook_endpoints ON webhook_endpoints.id = webhook_deliveries.webhook_endpoint_id
 INNER JOIN dbo.tenants ON tenants.id = webhook_deliveries.tenant_id
-WHERE webhook_deliveries.status IN (N'pending', N'failed')
-  AND webhook_endpoints.status = N'active'
-  AND webhook_deliveries.next_attempt_at <= SYSUTCDATETIME()
-ORDER BY webhook_deliveries.next_attempt_at ASC, webhook_deliveries.created_at ASC;
-`);
+`;
 
-    return result.recordset.map((row) => ({
-      deliveryId: row.delivery_id,
-      deliveryExternalId: row.delivery_external_id,
-      webhookEndpointExternalId: row.webhook_endpoint_external_id,
-      outboxEventId: row.outbox_event_id,
-      tenantId: row.tenant_id,
-      tenantExternalId: row.tenant_external_id,
-      eventType: row.event_type,
-      aggregateType: row.aggregate_type,
-      aggregateId: row.aggregate_id,
-      payloadJson: row.payload_json,
-      status: row.status,
-      attempts: row.attempts,
-      url: row.url,
-      signingSecret: row.signing_secret,
-      createdAt: row.created_at
-    }));
+async function insertAttempt(
+  transaction: sql.Transaction,
+  input: {
+    deliveryId: string;
+    attemptNumber: number;
+    statusCode: number | null;
+    responseBody: string | null;
+    errorMessage: string | null;
+    durationMs: number;
   }
-
-  async recordDeliverySucceeded(input: WebhookDeliverySuccessInput): Promise<void> {
-    const pool = await this.database.connect();
-    const transaction = new sql.Transaction(pool);
-    await transaction.begin();
-
-    try {
-      await new sql.Request(transaction)
-        .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
-        .input("attemptNumber", sql.Int, input.attemptNumber)
-        .input("statusCode", sql.Int, input.statusCode)
-        .input("responseBody", sql.NVarChar(2000), input.responseBody)
-        .input("durationMs", sql.Int, input.durationMs)
-        .query(`
+): Promise<void> {
+  await new sql.Request(transaction)
+    .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
+    .input("attemptNumber", sql.Int, input.attemptNumber)
+    .input("statusCode", sql.Int, input.statusCode)
+    .input("responseBody", sql.NVarChar(2000), input.responseBody)
+    .input("errorMessage", sql.NVarChar(1000), input.errorMessage)
+    .input("durationMs", sql.Int, input.durationMs).query(`
 INSERT INTO dbo.webhook_delivery_attempts (
-  webhook_delivery_id,
-  attempt_number,
-  status_code,
-  response_body,
-  error_message,
-  duration_ms
-)
-VALUES (@deliveryId, @attemptNumber, @statusCode, @responseBody, NULL, @durationMs);
-`);
-
-      await new sql.Request(transaction)
-        .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
-        .input("attemptNumber", sql.Int, input.attemptNumber)
-        .input("statusCode", sql.Int, input.statusCode)
-        .query(`
-UPDATE dbo.webhook_deliveries
-SET status = N'delivered',
-    attempts = @attemptNumber,
-    last_attempted_at = SYSUTCDATETIME(),
-    delivered_at = SYSUTCDATETIME(),
-    next_attempt_at = NULL,
-    last_status_code = @statusCode,
-    last_error = NULL,
-    updated_at = SYSUTCDATETIME()
-WHERE id = @deliveryId;
-`);
-
-      await transaction.commit();
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
-  }
-
-  async recordDeliveryFailed(input: WebhookDeliveryFailureInput): Promise<void> {
-    const pool = await this.database.connect();
-    const transaction = new sql.Transaction(pool);
-    await transaction.begin();
-
-    try {
-      await new sql.Request(transaction)
-        .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
-        .input("attemptNumber", sql.Int, input.attemptNumber)
-        .input("statusCode", sql.Int, input.statusCode)
-        .input("responseBody", sql.NVarChar(2000), input.responseBody)
-        .input("errorMessage", sql.NVarChar(1000), input.errorMessage)
-        .input("durationMs", sql.Int, input.durationMs)
-        .query(`
-INSERT INTO dbo.webhook_delivery_attempts (
-  webhook_delivery_id,
-  attempt_number,
-  status_code,
-  response_body,
-  error_message,
-  duration_ms
+  webhook_delivery_id, attempt_number, status_code, response_body, error_message, duration_ms
 )
 VALUES (@deliveryId, @attemptNumber, @statusCode, @responseBody, @errorMessage, @durationMs);
 `);
+}
 
-      await new sql.Request(transaction)
-        .input("deliveryId", sql.UniqueIdentifier, input.deliveryId)
-        .input("attemptNumber", sql.Int, input.attemptNumber)
-        .input("status", sql.NVarChar(32), input.deadLetter ? "dead_letter" : "failed")
-        .input("nextAttemptAt", sql.DateTime2, input.nextAttemptAt)
-        .input("statusCode", sql.Int, input.statusCode)
-        .input("errorMessage", sql.NVarChar(1000), input.errorMessage)
-        .query(`
-UPDATE dbo.webhook_deliveries
-SET status = @status,
-    attempts = @attemptNumber,
-    last_attempted_at = SYSUTCDATETIME(),
-    next_attempt_at = @nextAttemptAt,
-    last_status_code = @statusCode,
-    last_error = @errorMessage,
-    updated_at = SYSUTCDATETIME()
-WHERE id = @deliveryId;
-`);
-
-      if (input.deadLetter) {
-        await new sql.Request(transaction)
-          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
-          .input("eventType", sql.NVarChar(128), "webhook.dead_lettered.v1")
-          .input("aggregateType", sql.NVarChar(64), "webhook_delivery")
-          .input("aggregateId", sql.NVarChar(64), input.deliveryExternalId)
-          .input(
-            "payloadJson",
-            sql.NVarChar(sql.MAX),
-            JSON.stringify({
-              deliveryId: input.deliveryExternalId,
-              eventType: input.eventType,
-              attempts: input.attemptNumber,
-              error: input.errorMessage
-            })
-          )
-          .query(`
-INSERT INTO dbo.outbox_events (tenant_id, event_type, aggregate_type, aggregate_id, payload_json)
-VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
-`);
-
-        await new sql.Request(transaction)
-          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
-          .input("actorType", sql.NVarChar(64), "system")
-          .input("actorId", sql.NVarChar(256), "paymentops-worker")
-          .input("action", sql.NVarChar(128), "webhook_delivery.dead_lettered")
-          .input("resourceType", sql.NVarChar(128), "webhook_delivery")
-          .input("resourceId", sql.NVarChar(128), input.deliveryExternalId)
-          .input("metadataJson", sql.NVarChar(sql.MAX), JSON.stringify({ eventType: input.eventType }))
-          .query(`
-INSERT INTO dbo.audit_logs (
-  tenant_id,
-  actor_type,
-  actor_id,
-  action,
-  resource_type,
-  resource_id,
-  metadata_json
-)
-VALUES (@tenantId, @actorType, @actorId, @action, @resourceType, @resourceId, @metadataJson);
-`);
-      }
-
-      await transaction.commit();
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
-  }
+function mapDelivery(row: PendingWebhookDeliveryRow): PendingWebhookDelivery {
+  return {
+    deliveryId: row.delivery_id,
+    deliveryExternalId: row.delivery_external_id,
+    webhookEndpointExternalId: row.webhook_endpoint_external_id,
+    outboxEventId: row.outbox_event_id,
+    tenantId: row.tenant_id,
+    tenantExternalId: row.tenant_external_id,
+    eventType: row.event_type,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    payloadJson: row.payload_json,
+    status: row.status,
+    attempts: row.attempts,
+    url: row.url,
+    signingSecret: row.signing_secret,
+    createdAt: row.created_at
+  };
 }
 
 interface PendingWebhookDeliveryRow {

@@ -18,13 +18,15 @@ locals {
         }
       ]
       portMappings = var.container_port == null ? [] : [
-        {
-          name          = var.port_name
-          containerPort = var.container_port
-          hostPort      = var.container_port
-          protocol      = "tcp"
-          appProtocol   = "http"
-        }
+        merge(
+          {
+            name          = var.port_name
+            containerPort = var.container_port
+            hostPort      = var.container_port
+            protocol      = "tcp"
+          },
+          var.app_protocol == null ? {} : { appProtocol = var.app_protocol }
+        )
       ]
       logConfiguration = {
         logDriver = "awslogs"

@@ -18,5 +18,7 @@ locals {
     "worker",
     "provider-simulator",
     "otel-collector",
+    "redis",
+    "redpanda",
   ])
 }

@@ -6,10 +6,10 @@ Terraform provisions a no-apply staging baseline for PaymentOps Orchestrator in 
 - Public subnets for the Application Load Balancer and Fargate tasks
 - Isolated private subnets for optional RDS for SQL Server Express
 - ECR, ECS/Fargate, Service Connect, CloudWatch Logs, and task IAM roles
-- API, web, worker, provider simulator, and AWS Distro for OpenTelemetry services
+- API, web, worker, provider simulator, single-node Redis and Redpanda, and AWS Distro for OpenTelemetry services
 - Secrets Manager injection of `DATABASE_URL`
 
-The defaults are deliberately conservative: ECS services and SQL Server are disabled, while Fargate Spot is selected for staging. Applying this configuration creates billable AWS resources; review an AWS cost estimate first.
+The defaults are deliberately conservative: ECS services and SQL Server are disabled, while Fargate Spot is selected for staging. Redis and Redpanda run as single-node ephemeral Fargate services for demonstration only; production must use durable managed equivalents. Applying this configuration creates billable AWS resources; review an AWS cost estimate first.
 
 ## Prerequisites
 

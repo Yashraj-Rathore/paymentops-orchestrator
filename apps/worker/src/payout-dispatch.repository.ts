@@ -6,7 +6,6 @@ import { WorkerDatabaseService } from "./worker-database.service.js";
 
 export interface PendingPayoutDispatch {
   outboxEventId: string;
-  attempts: number;
   tenantId: string;
   tenantExternalId: string;
   payoutId: string;
@@ -19,7 +18,6 @@ export interface PendingPayoutDispatch {
 }
 
 export interface DispatchSucceededInput {
-  outboxEventId: string;
   payoutId: string;
   payoutExternalId: string;
   tenantId: string;
@@ -32,15 +30,12 @@ export interface DispatchSucceededInput {
 export class PayoutDispatchRepository {
   constructor(@Inject(WorkerDatabaseService) private readonly database: WorkerDatabaseService) {}
 
-  async findPendingPayoutDispatches(limit = 5): Promise<PendingPayoutDispatch[]> {
+  async findDispatchByOutboxEventId(outboxEventId: string): Promise<PendingPayoutDispatch | null> {
     const pool = await this.database.connect();
-    const result = await pool
-      .request()
-      .input("limit", sql.Int, limit)
+    const result = await pool.request().input("outboxEventId", sql.UniqueIdentifier, outboxEventId)
       .query<PendingPayoutDispatchRow>(`
-SELECT TOP (@limit)
-  outbox_events.id AS outbox_event_id,
-  outbox_events.attempts,
+SELECT
+  CONVERT(NVARCHAR(36), outbox_events.id) AS outbox_event_id,
   payouts.tenant_id,
   tenants.external_id AS tenant_external_id,
   payouts.id AS payout_id,
@@ -53,25 +48,27 @@ SELECT TOP (@limit)
 FROM dbo.outbox_events
 INNER JOIN dbo.payouts ON payouts.external_id = outbox_events.aggregate_id
 INNER JOIN dbo.tenants ON tenants.id = payouts.tenant_id
-WHERE outbox_events.status = N'pending'
+WHERE outbox_events.id = @outboxEventId
   AND outbox_events.event_type = N'payout.created.v1'
-  AND outbox_events.aggregate_type = N'payout'
-ORDER BY outbox_events.created_at ASC;
+  AND outbox_events.aggregate_type = N'payout';
 `);
 
-    return result.recordset.map((row) => ({
-      outboxEventId: row.outbox_event_id,
-      attempts: row.attempts,
-      tenantId: row.tenant_id,
-      tenantExternalId: row.tenant_external_id,
-      payoutId: row.payout_id,
-      payoutExternalId: row.payout_external_id,
-      providerPayoutId: row.provider_payout_id,
-      status: row.status,
-      amountMinor: Number(row.amount_minor),
-      currency: row.currency.trim(),
-      destinationAccount: row.destination_account
-    }));
+    const row = result.recordset[0];
+
+    return row
+      ? {
+          outboxEventId: row.outbox_event_id,
+          tenantId: row.tenant_id,
+          tenantExternalId: row.tenant_external_id,
+          payoutId: row.payout_id,
+          payoutExternalId: row.payout_external_id,
+          providerPayoutId: row.provider_payout_id,
+          status: row.status,
+          amountMinor: Number(row.amount_minor),
+          currency: row.currency.trim(),
+          destinationAccount: row.destination_account
+        }
+      : null;
   }
 
   async markDispatchSucceeded(input: DispatchSucceededInput): Promise<void> {
@@ -81,57 +78,44 @@ ORDER BY outbox_events.created_at ASC;
 
     try {
       if (input.previousStatus === "queued") {
-        await new sql.Request(transaction)
+        const updated = await new sql.Request(transaction)
           .input("payoutId", sql.UniqueIdentifier, input.payoutId)
-          .input("providerPayoutId", sql.NVarChar(128), input.providerPayoutId)
-          .query(`
+          .input("providerPayoutId", sql.NVarChar(128), input.providerPayoutId).query<{
+          id: string;
+        }>(`
 UPDATE dbo.payouts
 SET status = N'processing',
     provider_payout_id = @providerPayoutId,
+    dispatch_last_error = NULL,
     updated_at = SYSUTCDATETIME()
-WHERE id = @payoutId;
+OUTPUT inserted.id
+WHERE id = @payoutId AND status = N'queued';
 `);
 
-        await new sql.Request(transaction)
-          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
-          .input("payoutId", sql.UniqueIdentifier, input.payoutId)
-          .input("fromStatus", sql.NVarChar(32), input.previousStatus)
-          .input("toStatus", sql.NVarChar(32), "processing")
-          .input("reason", sql.NVarChar(256), "submitted to provider simulator")
-          .query(`
+        if (updated.recordset.length > 0) {
+          await new sql.Request(transaction)
+            .input("tenantId", sql.UniqueIdentifier, input.tenantId)
+            .input("payoutId", sql.UniqueIdentifier, input.payoutId)
+            .input("fromStatus", sql.NVarChar(32), input.previousStatus)
+            .input("toStatus", sql.NVarChar(32), "processing")
+            .input("reason", sql.NVarChar(256), "submitted to provider simulator").query(`
 INSERT INTO dbo.payout_status_history (tenant_id, payout_id, from_status, to_status, reason)
 VALUES (@tenantId, @payoutId, @fromStatus, @toStatus, @reason);
 `);
 
-        await new sql.Request(transaction)
-          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
-          .input("eventType", sql.NVarChar(128), "payout.processing.v1")
-          .input("aggregateType", sql.NVarChar(64), "payout")
-          .input("aggregateId", sql.NVarChar(64), input.payoutExternalId)
-          .input(
-            "payloadJson",
-            sql.NVarChar(sql.MAX),
-            JSON.stringify({
+          await insertOutboxEvent(transaction, {
+            tenantId: input.tenantId,
+            eventType: "payout.processing.v1",
+            aggregateId: input.payoutExternalId,
+            payload: {
               payoutId: input.payoutExternalId,
               tenantId: input.tenantExternalId,
               providerPayoutId: input.providerPayoutId,
               status: "processing"
-            })
-          )
-          .query(`
-INSERT INTO dbo.outbox_events (tenant_id, event_type, aggregate_type, aggregate_id, payload_json)
-VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
-`);
+            }
+          });
+        }
       }
-
-      await new sql.Request(transaction)
-        .input("outboxEventId", sql.UniqueIdentifier, input.outboxEventId)
-        .query(`
-UPDATE dbo.outbox_events
-SET status = N'published',
-    published_at = SYSUTCDATETIME()
-WHERE id = @outboxEventId;
-`);
 
       await transaction.commit();
     } catch (error) {
@@ -140,24 +124,107 @@ WHERE id = @outboxEventId;
     }
   }
 
-  async markDispatchFailed(outboxEventId: string, maxAttempts: number): Promise<void> {
+  async recordDispatchFailure(input: {
+    payoutId: string;
+    payoutExternalId: string;
+    tenantId: string;
+    tenantExternalId: string;
+    attemptNumber: number;
+    error: string;
+    deadLetter: boolean;
+  }): Promise<void> {
     const pool = await this.database.connect();
-    await pool
-      .request()
-      .input("outboxEventId", sql.UniqueIdentifier, outboxEventId)
-      .input("maxAttempts", sql.Int, maxAttempts)
-      .query(`
-UPDATE dbo.outbox_events
-SET attempts = attempts + 1,
-    status = CASE WHEN attempts + 1 >= @maxAttempts THEN N'dead_letter' ELSE N'pending' END
-WHERE id = @outboxEventId;
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      const updated = await new sql.Request(transaction)
+        .input("payoutId", sql.UniqueIdentifier, input.payoutId)
+        .input("attemptNumber", sql.Int, input.attemptNumber)
+        .input("error", sql.NVarChar(1000), input.error)
+        .input("deadLetter", sql.Bit, input.deadLetter).query<{ id: string }>(`
+UPDATE dbo.payouts
+SET dispatch_attempts = CASE
+      WHEN dispatch_attempts < @attemptNumber THEN @attemptNumber
+      ELSE dispatch_attempts
+    END,
+    dispatch_last_error = @error,
+    dispatch_dead_lettered_at = CASE WHEN @deadLetter = 1 THEN SYSUTCDATETIME() ELSE NULL END,
+    status = CASE WHEN @deadLetter = 1 THEN N'failed' ELSE status END,
+    updated_at = SYSUTCDATETIME()
+OUTPUT inserted.id
+WHERE id = @payoutId AND status = N'queued';
 `);
+
+      if (input.deadLetter && updated.recordset.length > 0) {
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
+          .input("payoutId", sql.UniqueIdentifier, input.payoutId)
+          .input("reason", sql.NVarChar(256), "provider dispatch retry limit reached").query(`
+INSERT INTO dbo.payout_status_history (tenant_id, payout_id, from_status, to_status, reason)
+VALUES (@tenantId, @payoutId, N'queued', N'failed', @reason);
+`);
+
+        await insertOutboxEvent(transaction, {
+          tenantId: input.tenantId,
+          eventType: "payout.failed.v1",
+          aggregateId: input.payoutExternalId,
+          payload: {
+            payoutId: input.payoutExternalId,
+            tenantId: input.tenantExternalId,
+            status: "failed",
+            reason: "provider dispatch retry limit reached"
+          }
+        });
+
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, input.tenantId)
+          .input("resourceId", sql.NVarChar(128), input.payoutExternalId)
+          .input(
+            "metadataJson",
+            sql.NVarChar(sql.MAX),
+            JSON.stringify({ attempts: input.attemptNumber, error: input.error })
+          ).query(`
+INSERT INTO dbo.audit_logs (
+  tenant_id, actor_type, actor_id, action, resource_type, resource_id, metadata_json
+)
+VALUES (
+  @tenantId, N'system', N'paymentops-worker', N'payout.dispatch_dead_lettered',
+  N'payout', @resourceId, @metadataJson
+);
+`);
+      }
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
   }
+}
+
+async function insertOutboxEvent(
+  transaction: sql.Transaction,
+  input: {
+    tenantId: string;
+    eventType: string;
+    aggregateId: string;
+    payload: Record<string, unknown>;
+  }
+): Promise<void> {
+  await new sql.Request(transaction)
+    .input("tenantId", sql.UniqueIdentifier, input.tenantId)
+    .input("eventType", sql.NVarChar(128), input.eventType)
+    .input("aggregateType", sql.NVarChar(64), "payout")
+    .input("aggregateId", sql.NVarChar(64), input.aggregateId)
+    .input("payloadJson", sql.NVarChar(sql.MAX), JSON.stringify(input.payload)).query(`
+INSERT INTO dbo.outbox_events (tenant_id, event_type, aggregate_type, aggregate_id, payload_json)
+VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
+`);
 }
 
 interface PendingPayoutDispatchRow {
   outbox_event_id: string;
-  attempts: number;
   tenant_id: string;
   tenant_external_id: string;
   payout_id: string;

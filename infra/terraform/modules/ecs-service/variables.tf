@@ -76,6 +76,18 @@ variable "port_name" {
   default     = "http"
 }
 
+variable "app_protocol" {
+  type        = string
+  description = "Optional ECS app protocol for the named port."
+  default     = "http"
+  nullable    = true
+
+  validation {
+    condition     = var.app_protocol == null || contains(["http", "http2", "grpc"], var.app_protocol)
+    error_message = "app_protocol must be null, http, http2, or grpc."
+  }
+}
+
 variable "environment_variables" {
   type        = map(string)
   description = "Plaintext environment variables injected into the container."

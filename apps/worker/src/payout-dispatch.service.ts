@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnApplicationShutdown, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { loadConfig } from "@paymentops/config";
 import type { ProviderPayoutResponse } from "@paymentops/contracts";
 import { createLogger } from "@paymentops/logger";
@@ -9,78 +9,47 @@ import {
   type PendingPayoutDispatch
 } from "./payout-dispatch.repository.js";
 
-const pollIntervalMs = 3000;
-const maxDispatchAttempts = 5;
-
 @Injectable()
-export class PayoutDispatchService implements OnModuleInit, OnApplicationShutdown {
+export class PayoutDispatchService {
   private readonly config = loadConfig("worker");
   private readonly logger = createLogger({
     service: "worker",
     environment: this.config.nodeEnv
   });
-  private timer: NodeJS.Timeout | null = null;
-  private running = false;
 
   constructor(
     @Inject(PayoutDispatchRepository) private readonly repository: PayoutDispatchRepository
   ) {}
 
-  onModuleInit(): void {
-    this.timer = setInterval(() => {
-      void this.processOnce();
-    }, pollIntervalMs);
+  async processJob(
+    outboxEventId: string,
+    attemptNumber: number,
+    maxAttempts: number
+  ): Promise<void> {
+    const dispatch = await this.repository.findDispatchByOutboxEventId(outboxEventId);
 
-    void this.processOnce();
-  }
-
-  onApplicationShutdown(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-  }
-
-  async processOnce(): Promise<void> {
-    if (this.running) {
+    if (!dispatch || dispatch.status !== "queued") {
       return;
     }
 
-    this.running = true;
-
-    try {
-      const dispatches = await this.repository.findPendingPayoutDispatches();
-
-      for (const dispatch of dispatches) {
-        await withActiveSpan(
-          "paymentops.payout.dispatch",
-          { "paymentops.payout.id": dispatch.payoutExternalId },
-          () => this.dispatchPayout(dispatch)
-        );
-      }
-    } finally {
-      this.running = false;
-    }
+    await withActiveSpan(
+      "paymentops.payout.dispatch",
+      {
+        "paymentops.payout.id": dispatch.payoutExternalId,
+        "paymentops.job.attempt": attemptNumber
+      },
+      () => this.dispatchPayout(dispatch, attemptNumber, maxAttempts)
+    );
   }
 
-  private async dispatchPayout(dispatch: PendingPayoutDispatch): Promise<void> {
-    if (dispatch.status !== "queued") {
-      await this.repository.markDispatchSucceeded({
-        outboxEventId: dispatch.outboxEventId,
-        payoutId: dispatch.payoutId,
-        payoutExternalId: dispatch.payoutExternalId,
-        tenantId: dispatch.tenantId,
-        tenantExternalId: dispatch.tenantExternalId,
-        previousStatus: dispatch.status,
-        providerPayoutId: dispatch.providerPayoutId ?? "already-dispatched"
-      });
-      return;
-    }
-
+  private async dispatchPayout(
+    dispatch: PendingPayoutDispatch,
+    attemptNumber: number,
+    maxAttempts: number
+  ): Promise<void> {
     try {
       const providerResponse = await this.submitToProvider(dispatch);
       await this.repository.markDispatchSucceeded({
-        outboxEventId: dispatch.outboxEventId,
         payoutId: dispatch.payoutId,
         payoutExternalId: dispatch.payoutExternalId,
         tenantId: dispatch.tenantId,
@@ -92,18 +61,35 @@ export class PayoutDispatchService implements OnModuleInit, OnApplicationShutdow
       this.logger.info("payout dispatched to provider", {
         resourceType: "payout",
         resourceId: dispatch.payoutExternalId,
-        providerPayoutId: providerResponse.providerPayoutId
+        providerPayoutId: providerResponse.providerPayoutId,
+        attempt: attemptNumber
       });
       recordPaymentOperation("payout.dispatched");
     } catch (error) {
-      await this.repository.markDispatchFailed(dispatch.outboxEventId, maxDispatchAttempts);
+      const message = error instanceof Error ? error.message : "Provider dispatch failed";
+      const deadLetter = attemptNumber >= maxAttempts;
+
+      await this.repository.recordDispatchFailure({
+        payoutId: dispatch.payoutId,
+        payoutExternalId: dispatch.payoutExternalId,
+        tenantId: dispatch.tenantId,
+        tenantExternalId: dispatch.tenantExternalId,
+        attemptNumber,
+        error: truncate(message, 1000),
+        deadLetter
+      });
+
       this.logger.warn("payout dispatch failed", {
         resourceType: "payout",
         resourceId: dispatch.payoutExternalId,
-        attempts: dispatch.attempts + 1,
-        error: error instanceof Error ? error.message : "unknown error"
+        attempt: attemptNumber,
+        deadLetter,
+        error: message
       });
-      recordPaymentOperation("payout.dispatch_failed");
+      recordPaymentOperation(
+        deadLetter ? "payout.dispatch_dead_lettered" : "payout.dispatch_failed"
+      );
+      throw error;
     }
   }
 
@@ -113,7 +99,8 @@ export class PayoutDispatchService implements OnModuleInit, OnApplicationShutdow
       {
         method: "POST",
         headers: {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "idempotency-key": dispatch.payoutExternalId
         },
         body: JSON.stringify({
           payoutId: dispatch.payoutExternalId,
@@ -135,4 +122,8 @@ export class PayoutDispatchService implements OnModuleInit, OnApplicationShutdow
 
     return (await response.json()) as ProviderPayoutResponse;
   }
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
 }

@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { WebhookDeliverySummary } from "@paymentops/contracts";
 import sql from "mssql";
 
@@ -71,8 +71,8 @@ ORDER BY webhook_deliveries.created_at DESC;
       const existing = await new sql.Request(transaction)
         .input("tenantId", sql.UniqueIdentifier, tenant.id)
         .input("deliveryExternalId", sql.NVarChar(64), deliveryExternalId)
-        .query<{ id: string }>(`
-SELECT id
+        .query<{ id: string; status: WebhookDeliverySummary["status"] }>(`
+SELECT id, status
 FROM dbo.webhook_deliveries
 WHERE tenant_id = @tenantId AND external_id = @deliveryExternalId;
 `);
@@ -81,6 +81,10 @@ WHERE tenant_id = @tenantId AND external_id = @deliveryExternalId;
 
       if (!delivery) {
         throw new NotFoundException(`Webhook delivery ${deliveryExternalId} was not found`);
+      }
+
+      if (delivery.status !== "failed" && delivery.status !== "dead_letter") {
+        throw new ConflictException("Only failed or dead-lettered webhook deliveries can be replayed");
       }
 
       await new sql.Request(transaction)
@@ -94,6 +98,8 @@ SET status = N'pending',
     delivered_at = NULL,
     last_error = NULL,
     last_status_code = NULL,
+    queue_job_id = NULL,
+    queued_at = NULL,
     updated_at = SYSUTCDATETIME()
 WHERE id = @deliveryId;
 `);

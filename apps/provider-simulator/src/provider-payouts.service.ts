@@ -16,10 +16,25 @@ export class ProviderPayoutsService {
     service: "provider-simulator",
     environment: process.env.NODE_ENV ?? "development"
   });
+  private readonly payoutsByIdempotencyKey = new Map<string, ProviderPayoutResponse>();
 
   createPayout(body: ProviderPayoutRequest): ProviderPayoutResponse {
     const request = normalizeRequest(body);
+    const idempotencyKey = `${request.tenantId}:${request.payoutId}`;
+    const existing = this.payoutsByIdempotencyKey.get(idempotencyKey);
+
+    if (existing) {
+      return existing;
+    }
+
     const providerPayoutId = `pp_${randomBytes(8).toString("hex")}`;
+    const response: ProviderPayoutResponse = {
+      providerPayoutId,
+      status: "processing",
+      callbackDelayMs
+    };
+    this.payoutsByIdempotencyKey.set(idempotencyKey, response);
+
     const finalStatus = request.amountMinor >= 5_000_000 ? "failed" : "paid";
     const reason =
       finalStatus === "paid" ? "simulated provider settlement" : "simulated provider risk decline";
@@ -38,11 +53,7 @@ export class ProviderPayoutsService {
       "paymentops.provider.final_status": finalStatus
     });
 
-    return {
-      providerPayoutId,
-      status: "processing",
-      callbackDelayMs
-    };
+    return response;
   }
 
   private async sendCallback(

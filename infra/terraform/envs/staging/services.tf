@@ -1,3 +1,72 @@
+module "redis" {
+  count  = var.deploy_services ? 1 : 0
+  source = "../../modules/ecs-service"
+
+  name                          = "${local.name}-redis"
+  cluster_arn                   = aws_ecs_cluster.this.arn
+  image                         = "redis:7-alpine"
+  command                       = ["redis-server", "--appendonly", "yes"]
+  cpu                           = 256
+  memory                        = 512
+  desired_count                 = 1
+  task_execution_role_arn       = aws_iam_role.task_execution.arn
+  task_role_arn                 = aws_iam_role.application_task.arn
+  subnet_ids                    = module.network.public_subnet_ids
+  security_group_ids            = [aws_security_group.ecs.id]
+  container_port                = 6379
+  port_name                     = "redis-tcp"
+  app_protocol                  = null
+  log_group_name                = aws_cloudwatch_log_group.service["redis"].name
+  aws_region                    = var.aws_region
+  health_check_command          = ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+  service_connect_namespace_arn = aws_service_discovery_http_namespace.this.arn
+  service_connect_dns_name      = "redis"
+  service_connect_port          = 6379
+  capacity_provider             = local.capacity_provider
+  tags                          = local.common_tags
+
+  depends_on = [terraform_data.deployment_guard]
+}
+
+module "redpanda" {
+  count  = var.deploy_services ? 1 : 0
+  source = "../../modules/ecs-service"
+
+  name        = "${local.name}-redpanda"
+  cluster_arn = aws_ecs_cluster.this.arn
+  image       = "docker.redpanda.com/redpandadata/redpanda:v24.2.7"
+  command = [
+    "redpanda", "start",
+    "--overprovisioned",
+    "--smp", "1",
+    "--memory", "1G",
+    "--reserve-memory", "0M",
+    "--node-id", "0",
+    "--check=false",
+    "--kafka-addr", "PLAINTEXT://0.0.0.0:9092",
+    "--advertise-kafka-addr", "PLAINTEXT://redpanda:9092"
+  ]
+  cpu                           = 512
+  memory                        = 2048
+  desired_count                 = 1
+  task_execution_role_arn       = aws_iam_role.task_execution.arn
+  task_role_arn                 = aws_iam_role.application_task.arn
+  subnet_ids                    = module.network.public_subnet_ids
+  security_group_ids            = [aws_security_group.ecs.id]
+  container_port                = 9092
+  port_name                     = "kafka-tcp"
+  app_protocol                  = null
+  log_group_name                = aws_cloudwatch_log_group.service["redpanda"].name
+  aws_region                    = var.aws_region
+  health_check_command          = ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+  service_connect_namespace_arn = aws_service_discovery_http_namespace.this.arn
+  service_connect_dns_name      = "redpanda"
+  service_connect_port          = 9092
+  capacity_provider             = local.capacity_provider
+  tags                          = local.common_tags
+
+  depends_on = [terraform_data.deployment_guard]
+}
 module "otel_collector" {
   count  = var.deploy_services ? 1 : 0
   source = "../../modules/ecs-service"
@@ -121,6 +190,8 @@ module "worker" {
   security_group_ids      = [aws_security_group.ecs.id]
   environment_variables = {
     NODE_ENV                    = "production"
+    REDIS_URL                   = "redis://redis:6379"
+    REDPANDA_BROKERS            = "redpanda:9092"
     OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector:4318"
     PROVIDER_SIMULATOR_URL      = "http://provider-simulator:3003"
     PAYMENTOPS_API_INTERNAL_URL = "http://api:3000"
@@ -134,7 +205,7 @@ module "worker" {
   capacity_provider             = local.capacity_provider
   tags                          = local.common_tags
 
-  depends_on = [module.api, module.provider_simulator, terraform_data.deployment_guard]
+  depends_on = [module.api, module.provider_simulator, module.redis, module.redpanda, terraform_data.deployment_guard]
 }
 
 module "web" {

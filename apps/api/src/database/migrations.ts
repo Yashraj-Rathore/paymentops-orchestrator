@@ -466,5 +466,79 @@ BEGIN
   CREATE INDEX ix_reconciliation_discrepancies_tenant_status ON dbo.reconciliation_discrepancies (tenant_id, status, created_at DESC);
 END;
 `
+  },
+  {
+    version: "007",
+    name: "durable_async_backbone",
+    sql: `
+IF COL_LENGTH(N'dbo.outbox_events', N'available_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.outbox_events ADD available_at DATETIME2(3) NULL;
+  UPDATE dbo.outbox_events SET available_at = created_at WHERE available_at IS NULL;
+  ALTER TABLE dbo.outbox_events ALTER COLUMN available_at DATETIME2(3) NOT NULL;
+  ALTER TABLE dbo.outbox_events ADD CONSTRAINT df_outbox_events_available_at DEFAULT SYSUTCDATETIME() FOR available_at;
+END;
+
+IF COL_LENGTH(N'dbo.outbox_events', N'locked_until') IS NULL
+BEGIN
+  ALTER TABLE dbo.outbox_events ADD locked_until DATETIME2(3) NULL;
+END;
+
+IF COL_LENGTH(N'dbo.outbox_events', N'locked_by') IS NULL
+BEGIN
+  ALTER TABLE dbo.outbox_events ADD locked_by NVARCHAR(128) NULL;
+END;
+
+IF COL_LENGTH(N'dbo.outbox_events', N'last_error') IS NULL
+BEGIN
+  ALTER TABLE dbo.outbox_events ADD last_error NVARCHAR(1000) NULL;
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = N'ix_outbox_events_relay'
+    AND object_id = OBJECT_ID(N'dbo.outbox_events')
+)
+BEGIN
+  CREATE INDEX ix_outbox_events_relay
+    ON dbo.outbox_events (status, available_at, locked_until, created_at ASC);
+END;
+
+IF COL_LENGTH(N'dbo.payouts', N'dispatch_attempts') IS NULL
+BEGIN
+  ALTER TABLE dbo.payouts ADD dispatch_attempts INT NOT NULL
+    CONSTRAINT df_payouts_dispatch_attempts DEFAULT 0;
+END;
+
+IF COL_LENGTH(N'dbo.payouts', N'dispatch_last_error') IS NULL
+BEGIN
+  ALTER TABLE dbo.payouts ADD dispatch_last_error NVARCHAR(1000) NULL;
+END;
+
+IF COL_LENGTH(N'dbo.payouts', N'dispatch_dead_lettered_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.payouts ADD dispatch_dead_lettered_at DATETIME2(3) NULL;
+END;
+
+IF COL_LENGTH(N'dbo.webhook_deliveries', N'queue_job_id') IS NULL
+BEGIN
+  ALTER TABLE dbo.webhook_deliveries ADD queue_job_id NVARCHAR(128) NULL;
+END;
+
+IF COL_LENGTH(N'dbo.webhook_deliveries', N'queued_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.webhook_deliveries ADD queued_at DATETIME2(3) NULL;
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = N'ix_webhook_deliveries_queue'
+    AND object_id = OBJECT_ID(N'dbo.webhook_deliveries')
+)
+BEGIN
+  CREATE INDEX ix_webhook_deliveries_queue
+    ON dbo.webhook_deliveries (status, queue_job_id, next_attempt_at, created_at ASC);
+END;
+`
   }
 ];

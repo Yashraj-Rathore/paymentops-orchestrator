@@ -1,30 +1,27 @@
-﻿import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WebhookDeliveryRepository } from "./webhook-delivery.repository.js";
 import { WebhookDeliveryService } from "./webhook-delivery.service.js";
 
 function createRepository(overrides: Partial<WebhookDeliveryRepository> = {}) {
   return {
-    scheduleMissingDeliveries: vi.fn().mockResolvedValue(1),
-    findSendableDeliveries: vi.fn().mockResolvedValue([
-      {
-        deliveryId: "delivery-uuid",
-        deliveryExternalId: "whd_test",
-        webhookEndpointExternalId: "whk_test",
-        outboxEventId: "evt-uuid",
-        tenantId: "tenant-uuid",
-        tenantExternalId: "mer_test",
-        eventType: "payout.paid.v1",
-        aggregateType: "payout",
-        aggregateId: "po_test",
-        payloadJson: JSON.stringify({ payoutId: "po_test", status: "paid" }),
-        status: "pending",
-        attempts: 0,
-        url: "https://merchant.example/webhooks",
-        signingSecret: "whsec_test",
-        createdAt: new Date("2026-06-24T00:00:00.000Z")
-      }
-    ]),
+    findDeliveryByExternalId: vi.fn().mockResolvedValue({
+      deliveryId: "delivery-uuid",
+      deliveryExternalId: "whd_test",
+      webhookEndpointExternalId: "whk_test",
+      outboxEventId: "evt-uuid",
+      tenantId: "tenant-uuid",
+      tenantExternalId: "mer_test",
+      eventType: "payout.paid.v1",
+      aggregateType: "payout",
+      aggregateId: "po_test",
+      payloadJson: JSON.stringify({ payoutId: "po_test", status: "paid" }),
+      status: "pending",
+      attempts: 0,
+      url: "https://merchant.example/webhooks",
+      signingSecret: "whsec_test",
+      createdAt: new Date("2026-06-24T00:00:00.000Z")
+    }),
     recordDeliverySucceeded: vi.fn().mockResolvedValue(undefined),
     recordDeliveryFailed: vi.fn().mockResolvedValue(undefined),
     ...overrides
@@ -36,7 +33,7 @@ describe("WebhookDeliveryService", () => {
     vi.unstubAllGlobals();
   });
 
-  it("sends signed merchant webhooks", async () => {
+  it("sends signed merchant webhook jobs", async () => {
     const repository = createRepository();
     vi.stubGlobal(
       "fetch",
@@ -47,9 +44,8 @@ describe("WebhookDeliveryService", () => {
       })
     );
 
-    await new WebhookDeliveryService(repository).processOnce();
+    await new WebhookDeliveryService(repository).processJob("whd_test", 1, 5);
 
-    expect(repository.scheduleMissingDeliveries).toHaveBeenCalled();
     expect(fetch).toHaveBeenCalledWith(
       "https://merchant.example/webhooks",
       expect.objectContaining({
@@ -70,28 +66,8 @@ describe("WebhookDeliveryService", () => {
     );
   });
 
-  it("dead-letters after the maximum attempt", async () => {
-    const repository = createRepository({
-      findSendableDeliveries: vi.fn().mockResolvedValue([
-        {
-          deliveryId: "delivery-uuid",
-          deliveryExternalId: "whd_test",
-          webhookEndpointExternalId: "whk_test",
-          outboxEventId: "evt-uuid",
-          tenantId: "tenant-uuid",
-          tenantExternalId: "mer_test",
-          eventType: "payout.failed.v1",
-          aggregateType: "payout",
-          aggregateId: "po_test",
-          payloadJson: JSON.stringify({ payoutId: "po_test", status: "failed" }),
-          status: "failed",
-          attempts: 4,
-          url: "https://merchant.example/webhooks",
-          signingSecret: "whsec_test",
-          createdAt: new Date("2026-06-24T00:00:00.000Z")
-        }
-      ])
-    });
+  it("dead-letters after the maximum BullMQ attempt", async () => {
+    const repository = createRepository();
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -101,7 +77,9 @@ describe("WebhookDeliveryService", () => {
       })
     );
 
-    await new WebhookDeliveryService(repository).processOnce();
+    await expect(
+      new WebhookDeliveryService(repository).processJob("whd_test", 5, 5)
+    ).rejects.toThrow("HTTP 500");
 
     expect(repository.recordDeliveryFailed).toHaveBeenCalledWith(
       expect.objectContaining({

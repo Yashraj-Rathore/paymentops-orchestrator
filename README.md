@@ -2,7 +2,7 @@
 
 PaymentOps Orchestrator is a payment operations platform simulator. It is designed to showcase production-style fintech backend concerns: idempotent writes, auditable state transitions, append-only ledger entries, async orchestration, retries, provider callbacks, merchant webhooks, reconciliation, and operator tooling.
 
-The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, reconciliation, and observability baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, worker dispatch, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, OpenTelemetry traces and metrics, correlated structured logs, a usable dashboard shell, and a no-apply AWS ECS/Fargate staging baseline.
+The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, reconciliation, and observability baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, Redpanda publication, BullMQ/Redis job processing, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, OpenTelemetry traces and metrics, correlated structured logs, a usable dashboard shell, and a no-apply AWS ECS/Fargate staging baseline.
 
 ## Workspace
 
@@ -159,13 +159,13 @@ The demo tenant seeds a high-value payout rule: USD payouts at or above 100000 m
 
 Operations users can approve or reject from the dashboard. Approving records the decision, moves the payout to `queued`, emits `payout.approved.v1`, and enqueues `payout.created.v1` so the existing worker dispatch path handles provider submission. Rejecting records the decision, moves the payout to `canceled`, and emits `payout.rejected.v1`.
 
-## Async Dispatch Baseline
+## Durable Async Dispatch
 
-The worker polls pending `payout.created.v1` outbox events and submits queued payouts to the provider simulator. Successful dispatch moves the payout to `processing`, stores the provider payout id, writes status history, creates a `payout.processing.v1` outbox event, and marks the original outbox event as published.
+The worker leases pending SQL outbox rows, publishes event envelopes to `paymentops.<event-type>` Redpanda topics, and marks publication state only after the broker and internal queue accept the work. Lease expiry and deterministic BullMQ job ids make relay recovery safe across worker restarts.
+
+`payout.created.v1` events enqueue Redis-backed BullMQ jobs. Successful dispatch moves the payout to `processing`, stores the provider payout id, writes status history, and creates a new `payout.processing.v1` outbox event. BullMQ applies exponential retries; the final failure moves the payout to `failed`, records an audit entry, emits `payout.failed.v1`, and mirrors the failed job into `paymentops-dead-letter`.
 
 The provider simulator exposes `POST /v1/provider/payouts`. It returns a provider payout id immediately, then sends a delayed callback to `POST /v1/provider-callbacks/payouts`. Normal-sized payouts settle as `paid`; very large demo payouts are declined as `failed` so both paths are testable.
-
-Dispatch failures increment the outbox attempt count and retry until the event is moved to `dead_letter` after repeated failures.
 
 ## Merchant Webhook Delivery
 
