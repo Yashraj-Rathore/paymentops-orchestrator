@@ -1,0 +1,29 @@
+services:
+  api:
+    environment:
+      NODE_ENV: test
+      OTEL_SDK_DISABLED: "true"
+    ports: !override
+      - "127.0.0.1::3000"
+
+  worker:
+    environment:
+      NODE_ENV: test
+      OTEL_SDK_DISABLED: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  provider-simulator:
+    environment:
+      NODE_ENV: test
+      OTEL_SDK_DISABLED: "true"
+    ports: !override []
+
+  mssql:
+    ports: !override []
+
+  redis:
+    ports: !override []
+
+  redpanda:
+    ports: !override []

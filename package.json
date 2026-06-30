@@ -14,8 +14,10 @@
     "db:migrate": "pnpm build:packages && pnpm --filter @paymentops/api migrate",
     "build": "pnpm -r --if-present build",
     "lint": "eslint .",
-    "typecheck": "pnpm build:packages && pnpm -r --if-present typecheck",
+    "typecheck": "pnpm build:packages && pnpm -r --if-present typecheck && pnpm typecheck:e2e",
+    "typecheck:e2e": "tsc -p tests/e2e/tsconfig.json --noEmit",
     "test": "pnpm -r --if-present test",
+    "test:e2e": "vitest run --config tests/e2e/vitest.config.ts",
     "format": "prettier --write .",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down --remove-orphans"

@@ -72,6 +72,7 @@ pnpm build        Build all workspace projects
 pnpm lint         Lint the workspace
 pnpm typecheck    Type-check all workspace projects
 pnpm test         Run unit tests
+pnpm test:e2e     Run the isolated Docker payout orchestration test
 pnpm db:migrate   Build shared packages and apply SQL Server migrations
 pnpm docker:up    Start the Docker Compose stack
 pnpm docker:down  Stop the Docker Compose stack
@@ -206,7 +207,18 @@ The local collector prints trace summaries and exposes OTLP metrics in Prometheu
 - Shared packages compile under strict TypeScript.
 - Docker Compose defines SQL Server, Redis, Redpanda, Redpanda Console, an OTLP collector with Prometheus metrics, and all app services.
 - GitHub Actions runs install, lint, typecheck, tests, build, Compose validation, and Terraform format/validation checks.
+- The payout orchestration E2E test proves API idempotency, SQL ledger writes, outbox relay, BullMQ dispatch, provider callbacks, final payout state, and signed merchant webhook delivery against an isolated Docker Compose stack.
 - Terraform defines the staging VPC, ALB, ECR, ECS/Fargate services, Service Connect, CloudWatch logs, IAM, Secrets Manager integration, and optional SQL Server.
+
+## End-to-End Payout Test
+
+Start Docker Desktop, then run:
+
+```powershell
+pnpm test:e2e
+```
+
+The test creates a separate Compose project with fresh volumes and a randomly published API port, so it does not reuse the normal development database. It starts the API, worker, provider simulator, SQL Server, Redis, and Redpanda; creates a tenant, client, API key, and webhook; submits the same idempotent payout twice; and waits for the provider callback and verified `payout.paid.v1` webhook. The stack is removed afterward. Set `PAYMENTOPS_E2E_KEEP_RUNNING=true` to retain it for debugging; Compose logs are written to `test-results/e2e-compose.log`.
 
 ## Delivery Roadmap
 
