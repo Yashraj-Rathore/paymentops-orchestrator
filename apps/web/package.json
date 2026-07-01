@@ -11,6 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@lucide/vue": "^1.22.0",
     "@paymentops/contracts": "workspace:*",
     "@paymentops/ui": "workspace:*",
     "@pinia/nuxt": "^0.9.0",
