@@ -253,7 +253,11 @@ IF NOT EXISTS (
     AND object_id = OBJECT_ID(N'dbo.payouts')
 )
 BEGIN
-  CREATE INDEX ix_payouts_provider_payout_id ON dbo.payouts (provider_payout_id) WHERE provider_payout_id IS NOT NULL;
+  EXEC sp_executesql N'
+    CREATE INDEX ix_payouts_provider_payout_id
+      ON dbo.payouts (provider_payout_id)
+      WHERE provider_payout_id IS NOT NULL;
+  ';
 END;
 `
   },
@@ -266,9 +270,11 @@ BEGIN
   ALTER TABLE dbo.webhook_endpoints ADD signing_secret NVARCHAR(128) NULL;
 END;
 
-UPDATE dbo.webhook_endpoints
-SET signing_secret = CONCAT(N'whsec_seeded_', external_id)
-WHERE signing_secret IS NULL;
+EXEC sp_executesql N'
+  UPDATE dbo.webhook_endpoints
+  SET signing_secret = CONCAT(N''whsec_seeded_'', external_id)
+  WHERE signing_secret IS NULL;
+';
 
 IF OBJECT_ID(N'dbo.webhook_deliveries', N'U') IS NULL
 BEGIN
@@ -474,9 +480,15 @@ END;
 IF COL_LENGTH(N'dbo.outbox_events', N'available_at') IS NULL
 BEGIN
   ALTER TABLE dbo.outbox_events ADD available_at DATETIME2(3) NULL;
-  UPDATE dbo.outbox_events SET available_at = created_at WHERE available_at IS NULL;
-  ALTER TABLE dbo.outbox_events ALTER COLUMN available_at DATETIME2(3) NOT NULL;
-  ALTER TABLE dbo.outbox_events ADD CONSTRAINT df_outbox_events_available_at DEFAULT SYSUTCDATETIME() FOR available_at;
+  EXEC sp_executesql N'
+    UPDATE dbo.outbox_events
+    SET available_at = created_at
+    WHERE available_at IS NULL;
+
+    ALTER TABLE dbo.outbox_events ALTER COLUMN available_at DATETIME2(3) NOT NULL;
+    ALTER TABLE dbo.outbox_events
+      ADD CONSTRAINT df_outbox_events_available_at DEFAULT SYSUTCDATETIME() FOR available_at;
+  ';
 END;
 
 IF COL_LENGTH(N'dbo.outbox_events', N'locked_until') IS NULL
@@ -500,8 +512,10 @@ IF NOT EXISTS (
     AND object_id = OBJECT_ID(N'dbo.outbox_events')
 )
 BEGIN
-  CREATE INDEX ix_outbox_events_relay
-    ON dbo.outbox_events (status, available_at, locked_until, created_at ASC);
+  EXEC sp_executesql N'
+    CREATE INDEX ix_outbox_events_relay
+      ON dbo.outbox_events (status, available_at, locked_until, created_at ASC);
+  ';
 END;
 
 IF COL_LENGTH(N'dbo.payouts', N'dispatch_attempts') IS NULL
