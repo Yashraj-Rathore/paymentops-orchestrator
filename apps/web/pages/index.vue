@@ -675,7 +675,7 @@ function newIdempotencyKey(): string {
         <div class="header-controls">
           <label class="global-search">
             <Search :size="17" />
-            <input v-model="searchQuery" type="search" placeholder="Search current view" />
+            <input v-model="searchQuery" type="search" placeholder="Search current view">
           </label>
           <button
             class="icon-button"
@@ -750,9 +750,7 @@ function newIdempotencyKey(): string {
                 <small>Merchant webhooks</small>
               </div>
               <strong>{{ deliveryRate }}%</strong>
-              <span class="metric-foot"
-                >{{ dashboard?.metrics.webhookDeliveries ?? 0 }} attempts</span
-              >
+              <span class="metric-foot">{{ dashboard?.metrics.webhookDeliveries ?? 0 }} attempts</span>
             </article>
             <article class="metric-card">
               <div class="metric-icon amber"><Clock3 :size="19" /></div>
@@ -1479,9 +1477,9 @@ function newIdempotencyKey(): string {
                           discrepancy.expectedAmountMinor === null
                             ? "No payout"
                             : formatMinor(
-                                discrepancy.expectedAmountMinor,
-                                discrepancy.expectedCurrency ?? discrepancy.actualCurrency
-                              )
+                              discrepancy.expectedAmountMinor,
+                              discrepancy.expectedCurrency ?? discrepancy.actualCurrency
+                            )
                         }}
                       </strong>
                     </div>
@@ -1515,7 +1513,7 @@ function newIdempotencyKey(): string {
                         maxlength="1000"
                         type="text"
                         placeholder="Resolution note"
-                      />
+                      >
                       <button
                         class="icon-button subtle"
                         type="button"
@@ -1681,8 +1679,7 @@ function newIdempotencyKey(): string {
                   <tbody>
                     <tr v-for="event in dashboard?.outboxEvents" :key="event.id">
                       <td>
-                        <strong>{{ event.eventType }}</strong
-                        ><span>{{ event.id }}</span>
+                        <strong>{{ event.eventType }}</strong><span>{{ event.id }}</span>
                       </td>
                       <td>{{ event.aggregateType }}</td>
                       <td>
@@ -1748,7 +1745,7 @@ function newIdempotencyKey(): string {
                   required
                   type="text"
                   placeholder="Acme Marketplaces"
-                />
+                >
               </label>
               <label>
                 <span>Owner email</span>
@@ -1756,7 +1753,7 @@ function newIdempotencyKey(): string {
                   v-model="tenantForm.ownerEmail"
                   type="email"
                   placeholder="owner@example.com"
-                />
+                >
               </label>
               <div class="form-context">
                 <Users :size="17" />
@@ -1779,7 +1776,7 @@ function newIdempotencyKey(): string {
                   required
                   type="email"
                   placeholder="developer@example.com"
-                />
+                >
               </label>
               <label>
                 <span>Tenant role</span>
@@ -1790,9 +1787,7 @@ function newIdempotencyKey(): string {
               </label>
               <div class="form-context">
                 <Users :size="17" />
-                <span
-                  >The membership starts invited and can be activated from the member list.</span
-                >
+                <span>The membership starts invited and can be activated from the member list.</span>
               </div>
               <button
                 class="primary-button full-button"
@@ -1815,13 +1810,11 @@ function newIdempotencyKey(): string {
                   required
                   type="text"
                   placeholder="Checkout service"
-                />
+                >
               </label>
               <div class="form-context">
                 <Server :size="17" />
-                <span
-                  >Client will belong to {{ dashboard?.tenant.name ?? "the active tenant" }}.</span
-                >
+                <span>Client will belong to {{ dashboard?.tenant.name ?? "the active tenant" }}.</span>
               </div>
               <button
                 class="primary-button full-button"
@@ -1844,7 +1837,7 @@ function newIdempotencyKey(): string {
                   required
                   type="text"
                   placeholder="Production checkout key"
-                />
+                >
               </label>
               <label>
                 <span>API client</span>
@@ -1861,7 +1854,7 @@ function newIdempotencyKey(): string {
               </label>
               <label>
                 <span>Permissions</span>
-                <input v-model="apiKeyForm.permissions" required type="text" />
+                <input v-model="apiKeyForm.permissions" required type="text">
               </label>
               <div class="form-context warning">
                 <KeyRound :size="17" />
@@ -1890,7 +1883,7 @@ function newIdempotencyKey(): string {
                   min="1"
                   step="1"
                   type="number"
-                />
+                >
                 <small>minor units</small>
               </div>
               <div class="form-split">
@@ -1905,12 +1898,12 @@ function newIdempotencyKey(): string {
                 </label>
                 <label>
                   <span>Reference</span>
-                  <input v-model="payoutForm.reference" type="text" placeholder="invoice-1042" />
+                  <input v-model="payoutForm.reference" type="text" placeholder="invoice-1042">
                 </label>
               </div>
               <label>
                 <span>Destination account</span>
-                <input v-model="payoutForm.destinationAccount" required type="text" />
+                <input v-model="payoutForm.destinationAccount" required type="text">
               </label>
               <label>
                 <span>API key secret</span>
@@ -1919,11 +1912,11 @@ function newIdempotencyKey(): string {
                   required
                   type="password"
                   placeholder="pops_sk_test_..."
-                />
+                >
               </label>
               <label>
                 <span>Idempotency key</span>
-                <input v-model="payoutForm.idempotencyKey" required type="text" />
+                <input v-model="payoutForm.idempotencyKey" required type="text">
               </label>
               <label>
                 <span>Description</span>
@@ -1954,7 +1947,7 @@ function newIdempotencyKey(): string {
                   required
                   type="url"
                   placeholder="https://example.com/paymentops"
-                />
+                >
               </label>
               <label>
                 <span>Description</span>
@@ -1962,7 +1955,7 @@ function newIdempotencyKey(): string {
                   v-model="webhookForm.description"
                   type="text"
                   placeholder="Production payout events"
-                />
+                >
               </label>
               <label>
                 <span>Subscribed events</span>
@@ -1986,7 +1979,7 @@ function newIdempotencyKey(): string {
             <form v-else class="action-form" @submit.prevent="submitReconciliation">
               <label>
                 <span>Provider</span>
-                <input v-model="reconciliationForm.providerName" required type="text" />
+                <input v-model="reconciliationForm.providerName" required type="text">
               </label>
               <label class="file-drop">
                 <FileUp :size="24" />
@@ -1999,7 +1992,7 @@ function newIdempotencyKey(): string {
                   accept=".csv,text/csv"
                   type="file"
                   @change="handleSettlementFile"
-                />
+                >
               </label>
               <button
                 class="secondary-button full-button"

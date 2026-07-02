@@ -9,11 +9,11 @@ test("operator can navigate the seeded operations dashboard", async ({ page }, t
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
 
   await page.getByRole("button", { name: "Payouts" }).click();
-  await expect(page.getByRole("heading", { name: "Payouts" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Payouts", level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "New payout" })).toBeVisible();
 
   await page.getByRole("button", { name: "Reconciliation" }).click();
-  await expect(page.getByRole("heading", { name: "Reconciliation" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reconciliation", level: 1 })).toBeVisible();
 });
 
 test("mobile navigation remains usable", async ({ page }, testInfo) => {
@@ -24,5 +24,5 @@ test("mobile navigation remains usable", async ({ page }, testInfo) => {
   await page.getByTitle("Open navigation").click();
   await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
   await page.getByRole("button", { name: "Webhooks" }).click();
-  await expect(page.getByRole("heading", { name: "Webhooks" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Webhooks", level: 1 })).toBeVisible();
 });
