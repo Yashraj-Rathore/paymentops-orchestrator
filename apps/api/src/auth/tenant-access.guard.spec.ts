@@ -1,7 +1,7 @@
 import { ForbiddenException, type ExecutionContext } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 
-import type { AuthRepository } from "./auth.repository.js";
+import type { AuthService } from "./auth.service.js";
 import type { AuthenticatedRequest } from "./auth.types.js";
 import { TenantAccessGuard } from "./tenant-access.guard.js";
 
@@ -16,7 +16,7 @@ function contextFor(request: AuthenticatedRequest): ExecutionContext {
 describe("TenantAccessGuard", () => {
   it("allows operations administrators across tenants", async () => {
     const findActiveMembership = vi.fn();
-    const guard = new TenantAccessGuard({ findActiveMembership } as unknown as AuthRepository);
+    const guard = new TenantAccessGuard({ findActiveMembership } as unknown as AuthService);
     const request: AuthenticatedRequest = {
       headers: {},
       params: { tenantId: "mer_test" },
@@ -41,7 +41,7 @@ describe("TenantAccessGuard", () => {
       tenantExternalId: "mer_test",
       role: "merchant_owner"
     });
-    const guard = new TenantAccessGuard({ findActiveMembership } as unknown as AuthRepository);
+    const guard = new TenantAccessGuard({ findActiveMembership } as unknown as AuthService);
     const request: AuthenticatedRequest = {
       headers: {},
       params: { tenantId: "mer_test" },
@@ -65,7 +65,7 @@ describe("TenantAccessGuard", () => {
   it("rejects users without an active membership", async () => {
     const guard = new TenantAccessGuard({
       findActiveMembership: vi.fn().mockResolvedValue(null)
-    } as unknown as AuthRepository);
+    } as unknown as AuthService);
     const request: AuthenticatedRequest = {
       headers: {},
       params: { tenantId: "mer_other" },
@@ -81,8 +81,6 @@ describe("TenantAccessGuard", () => {
       }
     };
 
-    await expect(guard.canActivate(contextFor(request))).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
+    await expect(guard.canActivate(contextFor(request))).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

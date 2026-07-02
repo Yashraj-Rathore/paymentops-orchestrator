@@ -6,12 +6,12 @@ import {
   Injectable
 } from "@nestjs/common";
 
-import { AuthRepository } from "./auth.repository.js";
+import { AuthService } from "./auth.service.js";
 import type { AuthenticatedRequest } from "./auth.types.js";
 
 @Injectable()
 export class TenantAccessGuard implements CanActivate {
-  constructor(@Inject(AuthRepository) private readonly repository: AuthRepository) {}
+  constructor(@Inject(AuthService) private readonly auth: AuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -31,7 +31,7 @@ export class TenantAccessGuard implements CanActivate {
       throw new ForbiddenException("A tenant membership is required for this operation");
     }
 
-    const membership = await this.repository.findActiveMembership(tenantId, email);
+    const membership = await this.auth.findActiveMembership(tenantId, email);
     if (!membership) {
       throw new ForbiddenException("The authenticated user is not an active member of this tenant");
     }

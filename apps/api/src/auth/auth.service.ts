@@ -64,6 +64,10 @@ export class AuthService {
     };
   }
 
+  findActiveMembership(tenantExternalId: string, email: string) {
+    return this.repository.findActiveMembership(tenantExternalId, email);
+  }
+
   toSessionResponse(principal: AuthenticatedPrincipal): AuthSessionResponse {
     return {
       type: principal.type,
@@ -109,9 +113,7 @@ export class AuthService {
     const payload = result.payload;
     const email = stringClaim(payload.email);
     const tokenRoles = rolesFromPayload(payload, this.config.auth.roleClaim);
-    const memberships = email
-      ? await this.repository.findActiveMembershipsByEmail(email)
-      : [];
+    const memberships = email ? await this.repository.findActiveMembershipsByEmail(email) : [];
     const isOperationsAdmin = tokenRoles.includes("operations_admin");
     const roles = isOperationsAdmin
       ? tokenRoles
