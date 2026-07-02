@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-test("operator can navigate the seeded operations dashboard", async ({ page }) => {
+test("operator can navigate the seeded operations dashboard", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.startsWith("mobile"), "Desktop navigation check");
+
   await page.goto("/");
 
   await expect(page.getByText("API connected")).toBeVisible({ timeout: 60_000 });

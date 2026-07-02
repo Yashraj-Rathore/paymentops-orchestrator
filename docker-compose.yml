@@ -6,6 +6,7 @@ services:
       context: .
     command: pnpm --filter @paymentops/api dev
     environment:
+      NODE_ENV: development
       API_PORT: 3000
       AUTH_MODE: development
       AUTH0_DOMAIN: ${AUTH0_DOMAIN:-paymentops-dev.us.auth0.com}
@@ -45,6 +46,7 @@ services:
       context: .
     command: pnpm --filter @paymentops/worker dev
     environment:
+      NODE_ENV: development
       WORKER_PORT: 3002
       DATABASE_URL: sqlserver://sa:${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}@mssql:1433;database=paymentops;encrypt=false;trustServerCertificate=true
       REDIS_URL: redis://redis:6379
@@ -69,6 +71,7 @@ services:
       context: .
     command: pnpm --filter @paymentops/web dev --host 0.0.0.0 --port 3001
     environment:
+      NODE_ENV: development
       NUXT_PUBLIC_API_BASE_URL: http://localhost:3000
       NUXT_PUBLIC_DEV_ADMIN_TOKEN: ${PAYMENTOPS_DEV_ADMIN_TOKEN:-dev-admin-token}
       NUXT_PUBLIC_AUTH_MODE: ${AUTH_MODE:-development}
@@ -86,6 +89,7 @@ services:
       context: .
     command: pnpm --filter @paymentops/provider-simulator dev
     environment:
+      NODE_ENV: development
       PROVIDER_SIMULATOR_PORT: 3003
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
