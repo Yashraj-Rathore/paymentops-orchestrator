@@ -554,5 +554,119 @@ BEGIN
     ON dbo.webhook_deliveries (status, queue_job_id, next_attempt_at, created_at ASC);
 END;
 `
+  },
+  {
+    version: "008",
+    name: "identity_lifecycle",
+    sql: `
+IF COL_LENGTH(N'dbo.webhook_endpoints', N'deleted_at') IS NULL
+BEGIN
+  ALTER TABLE dbo.webhook_endpoints ADD deleted_at DATETIME2(3) NULL;
+END;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.indexes
+  WHERE name = N'ix_webhook_endpoints_tenant_active'
+    AND object_id = OBJECT_ID(N'dbo.webhook_endpoints')
+)
+BEGIN
+  EXEC sp_executesql N'
+    CREATE INDEX ix_webhook_endpoints_tenant_active
+      ON dbo.webhook_endpoints (tenant_id, status, created_at DESC)
+      WHERE deleted_at IS NULL;
+  ';
+END;
+`
+  },
+  {
+    version: "009",
+    name: "temporal_business_history",
+    sql: `
+IF COL_LENGTH(N'dbo.reconciliation_discrepancies', N'resolution_note') IS NULL
+BEGIN
+  ALTER TABLE dbo.reconciliation_discrepancies ADD resolution_note NVARCHAR(1000) NULL;
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'dbo.tenants') AND temporal_type = 2)
+BEGIN
+  ALTER TABLE dbo.tenants ADD
+    valid_from DATETIME2(3) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+      CONSTRAINT df_tenants_valid_from DEFAULT SYSUTCDATETIME(),
+    valid_to DATETIME2(3) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+      CONSTRAINT df_tenants_valid_to DEFAULT CONVERT(DATETIME2(3), '9999-12-31 23:59:59.999'),
+    PERIOD FOR SYSTEM_TIME (valid_from, valid_to);
+  ALTER TABLE dbo.tenants SET (
+    SYSTEM_VERSIONING = ON (HISTORY_TABLE = dbo.tenants_history, DATA_CONSISTENCY_CHECK = ON)
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'dbo.api_clients') AND temporal_type = 2)
+BEGIN
+  ALTER TABLE dbo.api_clients ADD
+    valid_from DATETIME2(3) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+      CONSTRAINT df_api_clients_valid_from DEFAULT SYSUTCDATETIME(),
+    valid_to DATETIME2(3) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+      CONSTRAINT df_api_clients_valid_to DEFAULT CONVERT(DATETIME2(3), '9999-12-31 23:59:59.999'),
+    PERIOD FOR SYSTEM_TIME (valid_from, valid_to);
+  ALTER TABLE dbo.api_clients SET (
+    SYSTEM_VERSIONING = ON (HISTORY_TABLE = dbo.api_clients_history, DATA_CONSISTENCY_CHECK = ON)
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'dbo.webhook_endpoints') AND temporal_type = 2)
+BEGIN
+  ALTER TABLE dbo.webhook_endpoints ADD
+    valid_from DATETIME2(3) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+      CONSTRAINT df_webhook_endpoints_valid_from DEFAULT SYSUTCDATETIME(),
+    valid_to DATETIME2(3) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+      CONSTRAINT df_webhook_endpoints_valid_to DEFAULT CONVERT(DATETIME2(3), '9999-12-31 23:59:59.999'),
+    PERIOD FOR SYSTEM_TIME (valid_from, valid_to);
+  ALTER TABLE dbo.webhook_endpoints SET (
+    SYSTEM_VERSIONING = ON (HISTORY_TABLE = dbo.webhook_endpoints_history, DATA_CONSISTENCY_CHECK = ON)
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'dbo.payouts') AND temporal_type = 2)
+BEGIN
+  ALTER TABLE dbo.payouts ADD
+    valid_from DATETIME2(3) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+      CONSTRAINT df_payouts_valid_from DEFAULT SYSUTCDATETIME(),
+    valid_to DATETIME2(3) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+      CONSTRAINT df_payouts_valid_to DEFAULT CONVERT(DATETIME2(3), '9999-12-31 23:59:59.999'),
+    PERIOD FOR SYSTEM_TIME (valid_from, valid_to);
+  ALTER TABLE dbo.payouts SET (
+    SYSTEM_VERSIONING = ON (HISTORY_TABLE = dbo.payouts_history, DATA_CONSISTENCY_CHECK = ON)
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'dbo.payout_approvals') AND temporal_type = 2)
+BEGIN
+  ALTER TABLE dbo.payout_approvals ADD
+    valid_from DATETIME2(3) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+      CONSTRAINT df_payout_approvals_valid_from DEFAULT SYSUTCDATETIME(),
+    valid_to DATETIME2(3) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+      CONSTRAINT df_payout_approvals_valid_to DEFAULT CONVERT(DATETIME2(3), '9999-12-31 23:59:59.999'),
+    PERIOD FOR SYSTEM_TIME (valid_from, valid_to);
+  ALTER TABLE dbo.payout_approvals SET (
+    SYSTEM_VERSIONING = ON (HISTORY_TABLE = dbo.payout_approvals_history, DATA_CONSISTENCY_CHECK = ON)
+  );
+END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE object_id = OBJECT_ID(N'dbo.reconciliation_discrepancies') AND temporal_type = 2)
+BEGIN
+  ALTER TABLE dbo.reconciliation_discrepancies ADD
+    valid_from DATETIME2(3) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL
+      CONSTRAINT df_reconciliation_discrepancies_valid_from DEFAULT SYSUTCDATETIME(),
+    valid_to DATETIME2(3) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL
+      CONSTRAINT df_reconciliation_discrepancies_valid_to DEFAULT CONVERT(DATETIME2(3), '9999-12-31 23:59:59.999'),
+    PERIOD FOR SYSTEM_TIME (valid_from, valid_to);
+  ALTER TABLE dbo.reconciliation_discrepancies SET (
+    SYSTEM_VERSIONING = ON (
+      HISTORY_TABLE = dbo.reconciliation_discrepancies_history,
+      DATA_CONSISTENCY_CHECK = ON
+    )
+  );
+END;
+`
   }
 ];

@@ -19,10 +19,22 @@ interface ApiKeyResponse {
 interface WebhookEndpointResponse {
   id: string;
   secret: string;
+  status?: string;
+}
+
+interface MembershipResponse {
+  id: string;
+  status: string;
+}
+
+interface LifecycleResponse {
+  id: string;
+  status: string;
 }
 
 interface PayoutDetails {
   id: string;
+  providerPayoutId: string | null;
   status: string;
   replayed?: boolean;
   ledgerEntries: Array<{ direction: string; amountMinor: number }>;
@@ -30,7 +42,18 @@ interface PayoutDetails {
   outboxEvents: Array<{ eventType: string }>;
 }
 
+interface ReconciliationDetails {
+  id: string;
+  discrepancies: Array<{
+    id: string;
+    status: string;
+    resolutionNote: string | null;
+    resolvedBy: string | null;
+  }>;
+}
+
 interface TenantDashboard {
+  webhookEndpoints: Array<{ id: string }>;
   webhookDeliveries: Array<{
     aggregateId: string;
     eventType: string;
@@ -130,6 +153,34 @@ describe("payout orchestration", () => {
         })
       }
     );
+    const concurrentHeaders = {
+      "content-type": "application/json",
+      "idempotency-key": `e2e-concurrent-${runId}`,
+      "x-api-key": apiKey.secret
+    };
+    const concurrentBody = JSON.stringify({
+      amountMinor: 1750,
+      currency: "USD",
+      destinationAccount: "acct_e2e_concurrent",
+      reference: `e2e-concurrent-${runId}`
+    });
+    const concurrentResults = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        requestJson<PayoutDetails & { replayed: boolean }>(
+          `${apiBaseUrl}/v1/tenants/${tenant.id}/payouts`,
+          {
+            method: "POST",
+            headers: concurrentHeaders,
+            body: concurrentBody
+          }
+        )
+      )
+    );
+
+    expect(new Set(concurrentResults.map((result) => result.id)).size).toBe(1);
+    expect(concurrentResults.filter((result) => !result.replayed)).toHaveLength(1);
+    expect(concurrentResults.filter((result) => result.replayed)).toHaveLength(7);
+
     const webhook = await requestJson<WebhookEndpointResponse>(
       `${apiBaseUrl}/v1/tenants/${tenant.id}/webhook-endpoints`,
       {
@@ -214,6 +265,48 @@ describe("payout orchestration", () => {
 
     assertWebhookSignature(paidWebhook, webhook.secret);
 
+    if (!paid.providerPayoutId) {
+      throw new Error("Paid payout did not receive a provider payout identifier");
+    }
+
+    const settlementCsv = [
+      "provider_payout_id,amount_minor,currency,status,settled_at",
+      [paid.providerPayoutId, 4201, "USD", "paid", new Date().toISOString()].join(",")
+    ].join("\n");
+    const reconciliation = await requestJson<ReconciliationDetails>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/reconciliation/imports`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          providerName: "E2E Provider",
+          fileName: `e2e-${runId}.csv`,
+          csv: settlementCsv
+        })
+      }
+    );
+    expect(reconciliation.discrepancies).toHaveLength(1);
+
+    const discrepancy = reconciliation.discrepancies[0];
+    const resolved = await requestJson<ReconciliationDetails["discrepancies"][number]>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/reconciliation/discrepancies/${discrepancy.id}/resolve`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({ resolutionNote: "E2E provider fee difference accepted" })
+      }
+    );
+    expect(resolved.status).toBe("resolved");
+    expect(resolved.resolutionNote).toBe("E2E provider fee difference accepted");
+
+    const reportResponse = await fetch(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/reconciliation/reports/settlements.csv`,
+      { headers: adminHeaders }
+    );
+    expect(reportResponse.status).toBe(200);
+    expect(reportResponse.headers.get("content-type")).toContain("text/csv");
+    expect(await reportResponse.text()).toContain("E2E provider fee difference accepted");
+
     const dashboard = await pollUntil(
       async () =>
         requestJson<TenantDashboard>(`${apiBaseUrl}/v1/tenants/${tenant.id}/summary`, {
@@ -234,6 +327,95 @@ describe("payout orchestration", () => {
         (delivery) => delivery.aggregateId === created.id && delivery.status === "delivered"
       )
     ).toBe(true);
+
+    const membership = await requestJson<MembershipResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/memberships`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          email: `developer-${runId}@paymentops.test`,
+          role: "developer"
+        })
+      }
+    );
+    const activeMembership = await requestJson<MembershipResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/memberships/${membership.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ status: "active" })
+      }
+    );
+    expect(activeMembership.status).toBe("active");
+
+    const rotatedKey = await requestJson<ApiKeyResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/api-keys/${apiKey.id}/rotate`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({})
+      }
+    );
+    expect(rotatedKey.secret).toMatch(/^pops_sk_test_/);
+
+    const revokedKey = await requestJson<LifecycleResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/api-keys/${rotatedKey.id}/revoke`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+        body: JSON.stringify({})
+      }
+    );
+    expect(revokedKey.status).toBe("revoked");
+
+    const disabledClient = await requestJson<LifecycleResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/api-clients/${client.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ status: "disabled" })
+      }
+    );
+    expect(disabledClient.status).toBe("disabled");
+
+    const disabledWebhook = await requestJson<WebhookEndpointResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/webhook-endpoints/${webhook.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          description: "E2E webhook lifecycle verified",
+          status: "disabled"
+        })
+      }
+    );
+    expect(disabledWebhook.status).toBe("disabled");
+
+    await requestJson(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/webhook-endpoints/${webhook.id}`,
+      {
+        method: "DELETE",
+        headers: adminHeaders
+      }
+    );
+    const lifecycleDashboard = await requestJson<TenantDashboard>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}/summary`,
+      { headers: adminHeaders }
+    );
+    expect(lifecycleDashboard.webhookEndpoints).not.toContainEqual(
+      expect.objectContaining({ id: webhook.id })
+    );
+
+    const suspendedTenant = await requestJson<LifecycleResponse>(
+      `${apiBaseUrl}/v1/tenants/${tenant.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({ status: "suspended" })
+      }
+    );
+    expect(suspendedTenant.status).toBe("suspended");
   });
 });
 

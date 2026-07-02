@@ -5,9 +5,11 @@ Terraform provisions a no-apply staging baseline for PaymentOps Orchestrator in 
 - A DNS-enabled VPC spanning two availability zones
 - Public subnets for the Application Load Balancer and Fargate tasks
 - Isolated private subnets for optional RDS for SQL Server Express
-- ECR, ECS/Fargate, Service Connect, CloudWatch Logs, and task IAM roles
+- ECR, ECS/Fargate, Service Connect, CloudWatch Logs, alarms, dashboards, and task IAM roles
 - API, web, worker, provider simulator, single-node Redis and Redpanda, and AWS Distro for OpenTelemetry services
 - Secrets Manager injection of `DATABASE_URL`
+- Optional ACM certificate creation, Route 53 aliasing, HTTPS redirect, and AWS managed WAF rules
+- SNS-backed alarms for ALB 5xx responses, unhealthy targets, and structured API errors
 
 The defaults are deliberately conservative: ECS services and SQL Server are disabled, while Fargate Spot is selected for staging. Redis and Redpanda run as single-node ephemeral Fargate services for demonstration only; production must use durable managed equivalents. Applying this configuration creates billable AWS resources; review an AWS cost estimate first.
 
@@ -35,7 +37,9 @@ terraform plan
 4. Replace the example Auth0 values, set `image_tag` and `deploy_services=true`, review the plan, and apply.
 5. Verify the Terraform `public_url`, API `/health`, and `/docs` endpoints. The API initializes the database and runs pending migrations during startup.
 
-The load balancer is HTTP-only for this staging baseline. Add a validated ACM certificate, HTTPS listener, DNS record, WAF policy, and tighter ingress before exposing a production environment.
+Set `enable_https=true` with either `certificate_arn` or `create_certificate=true`, `domain_name`, and `route53_zone_id`. WAF managed rules are enabled by default. Subscribe `alert_email` and confirm the SNS email before relying on notifications. The manual `Deploy staging` workflow uses GitHub OIDC and an environment approval before Terraform apply.
+
+See `docs/runbooks/staging-operations.md` for incident response, rollback, queue recovery, migration handling, and reconciliation procedures.
 
 ## Validation
 

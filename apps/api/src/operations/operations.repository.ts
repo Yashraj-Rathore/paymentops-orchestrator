@@ -1,8 +1,9 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type {
   ApiClientSummary,
   ApiKeySummary,
   AuditLogSummary,
+  DeleteWebhookEndpointResponse,
   CreateWebhookEndpointResponse,
   LedgerEntrySummary,
   OutboxEventSummary,
@@ -12,6 +13,7 @@ import type {
   TenantDashboardResponse,
   TenantSummary,
   UserMembershipSummary,
+  UserMembershipRole,
   WebhookDeliverySummary,
   WebhookEndpointSummary
 } from "@paymentops/contracts";
@@ -30,7 +32,7 @@ interface TenantRow {
 interface MembershipRow {
   id: string;
   user_email: string;
-  role: string;
+  role: UserMembershipRole;
   status: "active" | "invited" | "disabled";
   created_at: Date;
 }
@@ -45,11 +47,14 @@ interface ApiClientRow {
 
 interface ApiKeyRow {
   id: string;
+  api_client_id?: string;
+  api_client_external_id?: string;
   external_id: string;
   name: string;
   key_prefix: string;
   permissions_json: string;
   expires_at: Date | null;
+  revoked_at?: Date | null;
   created_at: Date;
 }
 
@@ -202,6 +207,118 @@ VALUES (@tenantId, @email, @role);
     }
   }
 
+  async updateTenant(
+    tenantExternalId: string,
+    input: { name?: string; status?: TenantSummary["status"] }
+  ): Promise<TenantSummary> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("name", sql.NVarChar(200), input.name ?? null)
+      .input("status", sql.NVarChar(32), input.status ?? null)
+      .query<TenantRow>(`
+UPDATE dbo.tenants
+SET
+  name = COALESCE(@name, name),
+  status = COALESCE(@status, status),
+  updated_at = SYSUTCDATETIME()
+OUTPUT inserted.id, inserted.external_id, inserted.name, inserted.status, inserted.created_at
+WHERE id = @tenantId;
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: "tenant.updated",
+      resourceType: "tenant",
+      resourceId: tenantExternalId,
+      metadata: input
+    });
+    return mapTenant(result.recordset[0]);
+  }
+
+  async createMembership(input: {
+    tenantExternalId: string;
+    email: string;
+    role: UserMembershipRole;
+    status: UserMembershipSummary["status"];
+  }): Promise<UserMembershipSummary> {
+    const tenant = await this.requireTenant(input.tenantExternalId);
+    if (await this.findMembershipByEmail(tenant.id, input.email)) {
+      throw new ConflictException("A membership already exists for this email");
+    }
+
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("email", sql.NVarChar(256), input.email)
+      .input("role", sql.NVarChar(64), input.role)
+      .input("status", sql.NVarChar(32), input.status)
+      .query<MembershipRow>(`
+INSERT INTO dbo.user_memberships (tenant_id, user_email, role, status)
+OUTPUT inserted.id, inserted.user_email, inserted.role, inserted.status, inserted.created_at
+VALUES (@tenantId, @email, @role, @status);
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: "membership.created",
+      resourceType: "user_membership",
+      resourceId: result.recordset[0].id,
+      metadata: { email: input.email, role: input.role, status: input.status }
+    });
+    return mapMembership(result.recordset[0]);
+  }
+
+  async updateMembership(
+    tenantExternalId: string,
+    membershipId: string,
+    input: { role?: UserMembershipRole; status?: UserMembershipSummary["status"] }
+  ): Promise<UserMembershipSummary> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    const membership = await this.findMembership(tenant.id, membershipId);
+    if (!membership) {
+      throw new NotFoundException("Tenant membership was not found");
+    }
+
+    const removesActiveOwner =
+      membership.role === "merchant_owner" &&
+      membership.status === "active" &&
+      (input.role === "developer" ||
+        (input.status !== undefined && input.status !== "active"));
+    if (removesActiveOwner && (await this.countOtherActiveOwners(tenant.id, membershipId)) === 0) {
+      throw new ConflictException("A tenant must retain at least one active owner");
+    }
+
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("membershipId", sql.UniqueIdentifier, membershipId)
+      .input("role", sql.NVarChar(64), input.role ?? null)
+      .input("status", sql.NVarChar(32), input.status ?? null)
+      .query<MembershipRow>(`
+UPDATE dbo.user_memberships
+SET
+  role = COALESCE(@role, role),
+  status = COALESCE(@status, status),
+  updated_at = SYSUTCDATETIME()
+OUTPUT inserted.id, inserted.user_email, inserted.role, inserted.status, inserted.created_at
+WHERE id = @membershipId AND tenant_id = @tenantId;
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: "membership.updated",
+      resourceType: "user_membership",
+      resourceId: membershipId,
+      metadata: input
+    });
+    return mapMembership(result.recordset[0]);
+  }
+
   async ensureDemoTenant(): Promise<TenantDashboardResponse> {
     const existing = await this.findTenantByExternalId("mer_demo_northstar");
 
@@ -245,6 +362,36 @@ VALUES (@tenantId, @externalId, @name);
       metadata: { name: input.name }
     });
 
+    return mapApiClient(result.recordset[0]);
+  }
+
+  async updateApiClient(
+    tenantExternalId: string,
+    apiClientExternalId: string,
+    status: ApiClientSummary["status"]
+  ): Promise<ApiClientSummary> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    await this.requireApiClient(tenant.id, apiClientExternalId);
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("externalId", sql.NVarChar(64), apiClientExternalId)
+      .input("status", sql.NVarChar(32), status)
+      .query<ApiClientRow>(`
+UPDATE dbo.api_clients
+SET status = @status, updated_at = SYSUTCDATETIME()
+OUTPUT inserted.id, inserted.external_id, inserted.name, inserted.status, inserted.created_at
+WHERE tenant_id = @tenantId AND external_id = @externalId;
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: status === "disabled" ? "api_client.disabled" : "api_client.enabled",
+      resourceType: "api_client",
+      resourceId: apiClientExternalId,
+      metadata: { status }
+    });
     return mapApiClient(result.recordset[0]);
   }
 
@@ -308,6 +455,124 @@ VALUES (@tenantId, @apiClientId, @externalId, @name, @keyHash, @keyPrefix, @perm
     };
   }
 
+  async rotateApiKey(input: {
+    tenantExternalId: string;
+    apiKeyExternalId: string;
+    replacementExternalId: string;
+    name?: string;
+    keyHash: string;
+    keyPrefix: string;
+    permissions?: string[];
+    expiresAt?: string | null;
+    secret: string;
+  }): Promise<ApiKeyCreateResult> {
+    const tenant = await this.requireTenant(input.tenantExternalId);
+    const current = await this.requireApiKey(tenant.id, input.apiKeyExternalId);
+    if (current.revoked_at) {
+      throw new ConflictException("The API key has already been revoked");
+    }
+
+    const permissions =
+      input.permissions ?? (JSON.parse(current.permissions_json) as string[]);
+    const expiresAt =
+      input.expiresAt === undefined
+        ? current.expires_at
+        : input.expiresAt
+          ? new Date(input.expiresAt)
+          : null;
+    const pool = await this.database.connect();
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      await new sql.Request(transaction)
+        .input("tenantId", sql.UniqueIdentifier, tenant.id)
+        .input("apiKeyId", sql.UniqueIdentifier, current.id)
+        .query(`
+UPDATE dbo.api_keys
+SET revoked_at = SYSUTCDATETIME()
+WHERE id = @apiKeyId AND tenant_id = @tenantId AND revoked_at IS NULL;
+`);
+
+      const result = await new sql.Request(transaction)
+        .input("tenantId", sql.UniqueIdentifier, tenant.id)
+        .input("apiClientId", sql.UniqueIdentifier, current.api_client_id)
+        .input("externalId", sql.NVarChar(64), input.replacementExternalId)
+        .input("name", sql.NVarChar(200), input.name ?? current.name + " rotated")
+        .input("keyHash", sql.NVarChar(128), input.keyHash)
+        .input("keyPrefix", sql.NVarChar(32), input.keyPrefix)
+        .input("permissionsJson", sql.NVarChar(sql.MAX), JSON.stringify(permissions))
+        .input("expiresAt", sql.DateTime2, expiresAt)
+        .query<ApiKeyRow>(`
+INSERT INTO dbo.api_keys (
+  tenant_id,
+  api_client_id,
+  external_id,
+  name,
+  key_hash,
+  key_prefix,
+  permissions_json,
+  expires_at
+)
+OUTPUT
+  inserted.id,
+  inserted.external_id,
+  inserted.name,
+  inserted.key_prefix,
+  inserted.permissions_json,
+  inserted.expires_at,
+  inserted.created_at
+VALUES (@tenantId, @apiClientId, @externalId, @name, @keyHash, @keyPrefix, @permissionsJson, @expiresAt);
+`);
+
+      await insertAuditLog(transaction, {
+        tenantId: tenant.id,
+        action: "api_key.rotated",
+        resourceType: "api_key",
+        resourceId: input.apiKeyExternalId,
+        metadata: { replacementApiKeyId: input.replacementExternalId }
+      });
+      await transaction.commit();
+      return { ...mapApiKey(result.recordset[0]), secret: input.secret };
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  async revokeApiKey(tenantExternalId: string, apiKeyExternalId: string) {
+    const tenant = await this.requireTenant(tenantExternalId);
+    const apiKey = await this.requireApiKey(tenant.id, apiKeyExternalId);
+    if (apiKey.revoked_at) {
+      throw new ConflictException("The API key has already been revoked");
+    }
+
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("apiKeyId", sql.UniqueIdentifier, apiKey.id)
+      .query<{ revoked_at: Date }>(`
+UPDATE dbo.api_keys
+SET revoked_at = SYSUTCDATETIME()
+OUTPUT inserted.revoked_at
+WHERE id = @apiKeyId AND tenant_id = @tenantId AND revoked_at IS NULL;
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: "api_key.revoked",
+      resourceType: "api_key",
+      resourceId: apiKeyExternalId,
+      metadata: {}
+    });
+    return {
+      id: apiKeyExternalId,
+      status: "revoked" as const,
+      revokedAt: result.recordset[0].revoked_at.toISOString()
+    };
+  }
+
   async createWebhookEndpoint(input: {
     tenantExternalId: string;
     externalId: string;
@@ -363,6 +628,97 @@ VALUES (@tenantId, @externalId, @url, @description, @secretHash, @signingSecret,
     };
   }
 
+  async updateWebhookEndpoint(
+    tenantExternalId: string,
+    webhookExternalId: string,
+    input: {
+      url?: string;
+      description?: string | null;
+      eventSubscriptions?: string[];
+      status?: WebhookEndpointSummary["status"];
+    }
+  ): Promise<WebhookEndpointSummary> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    await this.requireWebhookEndpoint(tenant.id, webhookExternalId);
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("externalId", sql.NVarChar(64), webhookExternalId)
+      .input("url", sql.NVarChar(2048), input.url ?? null)
+      .input("description", sql.NVarChar(500), input.description ?? null)
+      .input("descriptionProvided", sql.Bit, input.description !== undefined)
+      .input(
+        "eventsJson",
+        sql.NVarChar(sql.MAX),
+        input.eventSubscriptions ? JSON.stringify(input.eventSubscriptions) : null
+      )
+      .input("status", sql.NVarChar(32), input.status ?? null)
+      .query<WebhookEndpointRow>(`
+UPDATE dbo.webhook_endpoints
+SET
+  url = COALESCE(@url, url),
+  description = CASE WHEN @descriptionProvided = 1 THEN @description ELSE description END,
+  event_subscriptions_json = COALESCE(@eventsJson, event_subscriptions_json),
+  status = COALESCE(@status, status),
+  updated_at = SYSUTCDATETIME()
+OUTPUT
+  inserted.id,
+  inserted.external_id,
+  inserted.url,
+  inserted.description,
+  inserted.event_subscriptions_json,
+  inserted.status,
+  inserted.created_at
+WHERE tenant_id = @tenantId
+  AND external_id = @externalId
+  AND deleted_at IS NULL;
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: "webhook_endpoint.updated",
+      resourceType: "webhook_endpoint",
+      resourceId: webhookExternalId,
+      metadata: input
+    });
+    return mapWebhookEndpoint(result.recordset[0]);
+  }
+
+  async deleteWebhookEndpoint(
+    tenantExternalId: string,
+    webhookExternalId: string
+  ): Promise<DeleteWebhookEndpointResponse> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    await this.requireWebhookEndpoint(tenant.id, webhookExternalId);
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("externalId", sql.NVarChar(64), webhookExternalId)
+      .query<{ deleted_at: Date }>(`
+UPDATE dbo.webhook_endpoints
+SET status = N'disabled', deleted_at = SYSUTCDATETIME(), updated_at = SYSUTCDATETIME()
+OUTPUT inserted.deleted_at
+WHERE tenant_id = @tenantId
+  AND external_id = @externalId
+  AND deleted_at IS NULL;
+`);
+
+    await this.writeAuditLog({
+      tenantId: tenant.id,
+      action: "webhook_endpoint.deleted",
+      resourceType: "webhook_endpoint",
+      resourceId: webhookExternalId,
+      metadata: {}
+    });
+    return {
+      id: webhookExternalId,
+      deleted: true,
+      deletedAt: result.recordset[0].deleted_at.toISOString()
+    };
+  }
+
   async getTenantDashboard(tenantExternalId: string): Promise<TenantDashboardResponse> {
     const tenant = await this.requireTenant(tenantExternalId);
     const pool = await this.database.connect();
@@ -395,7 +751,7 @@ ORDER BY created_at DESC;
       .query<WebhookEndpointRow>(`
 SELECT id, external_id, url, description, event_subscriptions_json, status, created_at
 FROM dbo.webhook_endpoints
-WHERE tenant_id = @tenantId
+WHERE tenant_id = @tenantId AND deleted_at IS NULL
 ORDER BY created_at DESC;
 `);
 
@@ -651,6 +1007,61 @@ VALUES (@tenantId, @externalId, @name, N'amount_threshold', N'require_approval',
       metadata: { threshold: 100000, currency: "USD" }
     });
   }
+
+  private async findMembership(
+    tenantId: string,
+    membershipId: string
+  ): Promise<MembershipRow | null> {
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenantId)
+      .input("membershipId", sql.UniqueIdentifier, membershipId)
+      .query<MembershipRow>(`
+SELECT id, user_email, role, status, created_at
+FROM dbo.user_memberships
+WHERE tenant_id = @tenantId AND id = @membershipId;
+`);
+    return result.recordset[0] ?? null;
+  }
+
+  private async findMembershipByEmail(
+    tenantId: string,
+    email: string
+  ): Promise<MembershipRow | null> {
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenantId)
+      .input("email", sql.NVarChar(256), email.toLowerCase())
+      .query<MembershipRow>(`
+SELECT id, user_email, role, status, created_at
+FROM dbo.user_memberships
+WHERE tenant_id = @tenantId AND LOWER(user_email) = @email;
+`);
+    return result.recordset[0] ?? null;
+  }
+
+  private async countOtherActiveOwners(
+    tenantId: string,
+    membershipId: string
+  ): Promise<number> {
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenantId)
+      .input("membershipId", sql.UniqueIdentifier, membershipId)
+      .query<{ owner_count: number }>(`
+SELECT COUNT(*) AS owner_count
+FROM dbo.user_memberships
+WHERE tenant_id = @tenantId
+  AND id <> @membershipId
+  AND role = N'merchant_owner'
+  AND status = N'active';
+`);
+    return Number(result.recordset[0].owner_count);
+  }
+
   private async requireTenant(externalId: string): Promise<TenantRow> {
     const tenant = await this.findTenantByExternalId(externalId);
 
@@ -708,12 +1119,31 @@ WHERE tenant_id = @tenantId AND external_id = @externalId;
       .request()
       .input("tenantId", sql.UniqueIdentifier, tenantId)
       .input("externalId", sql.NVarChar(64), externalId).query<ApiKeyRow>(`
-SELECT id, external_id, name, key_prefix, permissions_json, expires_at, created_at
+SELECT
+  api_keys.id,
+  api_keys.api_client_id,
+  api_clients.external_id AS api_client_external_id,
+  api_keys.external_id,
+  api_keys.name,
+  api_keys.key_prefix,
+  api_keys.permissions_json,
+  api_keys.expires_at,
+  api_keys.revoked_at,
+  api_keys.created_at
 FROM dbo.api_keys
-WHERE tenant_id = @tenantId AND external_id = @externalId;
+INNER JOIN dbo.api_clients ON api_clients.id = api_keys.api_client_id
+WHERE api_keys.tenant_id = @tenantId AND api_keys.external_id = @externalId;
 `);
 
     return result.recordset[0] ?? null;
+  }
+
+  private async requireApiKey(tenantId: string, externalId: string): Promise<ApiKeyRow> {
+    const apiKey = await this.findApiKey(tenantId, externalId);
+    if (!apiKey) {
+      throw new NotFoundException("API key " + externalId + " was not found");
+    }
+    return apiKey;
   }
 
   private async findWebhookEndpoint(
@@ -727,10 +1157,21 @@ WHERE tenant_id = @tenantId AND external_id = @externalId;
       .input("externalId", sql.NVarChar(64), externalId).query<WebhookEndpointRow>(`
 SELECT id, external_id, url, description, event_subscriptions_json, status, created_at
 FROM dbo.webhook_endpoints
-WHERE tenant_id = @tenantId AND external_id = @externalId;
+WHERE tenant_id = @tenantId AND external_id = @externalId AND deleted_at IS NULL;
 `);
 
     return result.recordset[0] ?? null;
+  }
+
+  private async requireWebhookEndpoint(
+    tenantId: string,
+    externalId: string
+  ): Promise<WebhookEndpointRow> {
+    const endpoint = await this.findWebhookEndpoint(tenantId, externalId);
+    if (!endpoint) {
+      throw new NotFoundException("Webhook endpoint " + externalId + " was not found");
+    }
+    return endpoint;
   }
 
   private async findRiskRule(tenantId: string, externalId: string): Promise<RiskRuleRow | null> {

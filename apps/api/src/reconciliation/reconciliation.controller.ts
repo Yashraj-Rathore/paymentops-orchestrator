@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -6,18 +6,22 @@ import {
   ApiOkResponse,
   ApiTags
 } from "@nestjs/swagger";
-import type { CreateReconciliationImportRequest } from "@paymentops/contracts";
+import type {
+  CreateReconciliationImportRequest,
+  ResolveReconciliationDiscrepancyRequest
+} from "@paymentops/contracts";
 
 import { AdminAuthGuard } from "../auth/admin-auth.guard.js";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RequireRoles } from "../auth/roles.decorator.js";
 import { RolesGuard } from "../auth/roles.guard.js";
+import { TenantAccessGuard } from "../auth/tenant-access.guard.js";
 import { ReconciliationService } from "./reconciliation.service.js";
 
 @ApiTags("reconciliation")
 @ApiBearerAuth()
 @ApiHeader({ name: "x-paymentops-dev-admin-token", required: false })
-@UseGuards(AdminAuthGuard, RolesGuard)
+@UseGuards(AdminAuthGuard, TenantAccessGuard, RolesGuard)
 @Controller("tenants/:tenantId/reconciliation")
 export class ReconciliationController {
   constructor(
@@ -47,5 +51,26 @@ export class ReconciliationController {
   @ApiOkResponse({ description: "Get settlement rows and discrepancies for an import." })
   getImport(@Param("tenantId") tenantId: string, @Param("importId") importId: string) {
     return this.reconciliation.getImport(tenantId, importId);
+  }
+
+  @Post("discrepancies/:discrepancyId/resolve")
+  @RequireRoles("operations_admin", "merchant_owner")
+  @ApiOkResponse({ description: "Resolve an open discrepancy with an audited operator note." })
+  resolveDiscrepancy(
+    @Param("tenantId") tenantId: string,
+    @Param("discrepancyId") discrepancyId: string,
+    @Body() body: ResolveReconciliationDiscrepancyRequest,
+    @Req() request: AuthenticatedRequest
+  ) {
+    return this.reconciliation.resolveDiscrepancy(tenantId, discrepancyId, body, request.auth);
+  }
+
+  @Get("reports/settlements.csv")
+  @RequireRoles("operations_admin", "merchant_owner", "developer")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Content-Disposition", 'attachment; filename="paymentops-settlement-report.csv"')
+  @ApiOkResponse({ description: "Download a tenant settlement and discrepancy report as CSV." })
+  exportSettlementReport(@Param("tenantId") tenantId: string) {
+    return this.reconciliation.exportSettlementReport(tenantId);
   }
 }

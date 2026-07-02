@@ -3,7 +3,8 @@ import type {
   AuthPrincipalType,
   CreateReconciliationImportRequest,
   ReconciliationImportDetails,
-  ReconciliationImportSummary
+  ReconciliationImportSummary,
+  ResolveReconciliationDiscrepancyRequest
 } from "@paymentops/contracts";
 import { recordPaymentOperation } from "@paymentops/observability";
 import { parse } from "csv-parse/sync";
@@ -40,6 +41,70 @@ export class ReconciliationService {
       requiredString(tenantId, "tenantId"),
       requiredString(importId, "importId")
     );
+  }
+
+  resolveDiscrepancy(
+    tenantId: string,
+    discrepancyId: string,
+    body: ResolveReconciliationDiscrepancyRequest,
+    principal?: AuthenticatedPrincipal
+  ) {
+    const actor = reconciliationActor(principal);
+    return this.repository.resolveDiscrepancy({
+      tenantExternalId: requiredString(tenantId, "tenantId"),
+      discrepancyExternalId: requiredString(discrepancyId, "discrepancyId"),
+      resolutionNote: limitedString(body.resolutionNote, "resolutionNote", 1000),
+      actorType: actor.type,
+      actorId: actor.id
+    });
+  }
+
+  async exportSettlementReport(tenantId: string): Promise<string> {
+    const rows = await this.repository.getSettlementReportRows(
+      requiredString(tenantId, "tenantId")
+    );
+    const headers = [
+      "import_id",
+      "provider",
+      "file_name",
+      "provider_payout_id",
+      "payout_id",
+      "amount_minor",
+      "currency",
+      "provider_status",
+      "settled_at",
+      "match_status",
+      "discrepancy_type",
+      "discrepancy_status",
+      "resolution_note",
+      "resolved_by",
+      "resolved_at"
+    ];
+
+    return [
+      headers.join(","),
+      ...rows.map((row) =>
+        [
+          row.importId,
+          row.providerName,
+          row.fileName,
+          row.providerPayoutId,
+          row.payoutId,
+          row.amountMinor,
+          row.currency,
+          row.providerStatus,
+          row.settledAt,
+          row.matchStatus,
+          row.discrepancyType,
+          row.discrepancyStatus,
+          row.resolutionNote,
+          row.resolvedBy,
+          row.resolvedAt
+        ]
+          .map(csvCell)
+          .join(",")
+      )
+    ].join("\n");
   }
 
   async createImport(
@@ -193,4 +258,13 @@ function reconciliationActor(principal?: AuthenticatedPrincipal): {
 
 function externalId(prefix: string): string {
   return prefix + "_" + randomBytes(8).toString("hex");
+}
+
+function csvCell(value: string | number | null): string {
+  if (value === null) {
+    return "";
+  }
+
+  const normalized = String(value);
+  return /[",\r\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
 }

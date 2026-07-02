@@ -4,12 +4,13 @@ import { ApiBearerAuth, ApiCreatedResponse, ApiHeader, ApiOkResponse, ApiTags } 
 import { AdminAuthGuard } from "../auth/admin-auth.guard.js";
 import { RequireRoles } from "../auth/roles.decorator.js";
 import { RolesGuard } from "../auth/roles.guard.js";
+import { TenantAccessGuard } from "../auth/tenant-access.guard.js";
 import { WebhookDeliveriesService } from "./webhook-deliveries.service.js";
 
 @ApiTags("webhook-deliveries")
 @ApiBearerAuth()
 @ApiHeader({ name: "x-paymentops-dev-admin-token", required: false })
-@UseGuards(AdminAuthGuard, RolesGuard)
+@UseGuards(AdminAuthGuard, TenantAccessGuard, RolesGuard)
 @Controller("tenants/:tenantId/webhook-deliveries")
 export class WebhookDeliveriesController {
   constructor(@Inject(WebhookDeliveriesService) private readonly deliveries: WebhookDeliveriesService) {}

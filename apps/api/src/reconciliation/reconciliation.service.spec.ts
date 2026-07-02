@@ -95,13 +95,77 @@ describe("ReconciliationService", () => {
   const repository = {
     createImport: vi.fn(),
     listImports: vi.fn(),
-    getImport: vi.fn()
+    getImport: vi.fn(),
+    resolveDiscrepancy: vi.fn(),
+    getSettlementReportRows: vi.fn()
   } as unknown as ReconciliationRepository;
   let service: ReconciliationService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     service = new ReconciliationService(repository);
+  });
+
+  it("resolves discrepancies with validated actor context", async () => {
+    vi.mocked(repository.resolveDiscrepancy).mockResolvedValue({
+      id: "rcd_1",
+      settlementRowId: "row_1",
+      providerPayoutId: "prov_1",
+      payoutId: "po_1",
+      type: "amount_mismatch",
+      status: "resolved",
+      expectedAmountMinor: 125000,
+      actualAmountMinor: 125100,
+      expectedCurrency: "USD",
+      actualCurrency: "USD",
+      resolutionNote: "Provider correction accepted",
+      resolvedBy: "ops@example.com",
+      createdAt: "2026-06-27T12:00:00.000Z",
+      resolvedAt: "2026-06-27T12:10:00.000Z"
+    });
+
+    await service.resolveDiscrepancy(
+      "mer_test",
+      "rcd_1",
+      { resolutionNote: " Provider correction accepted " },
+      principal
+    );
+
+    expect(repository.resolveDiscrepancy).toHaveBeenCalledWith({
+      tenantExternalId: "mer_test",
+      discrepancyExternalId: "rcd_1",
+      resolutionNote: "Provider correction accepted",
+      actorType: "dev_admin",
+      actorId: "ops@example.com"
+    });
+  });
+
+  it("exports a standards-compliant settlement CSV", async () => {
+    vi.mocked(repository.getSettlementReportRows).mockResolvedValue([
+      {
+        importId: "rec_1",
+        providerName: 'Demo, "Payments"',
+        fileName: "settlement.csv",
+        providerPayoutId: "prov_1",
+        payoutId: "po_1",
+        amountMinor: 125000,
+        currency: "USD",
+        providerStatus: "paid",
+        settledAt: "2026-06-27T12:00:00.000Z",
+        matchStatus: "amount_mismatch",
+        discrepancyType: "amount_mismatch",
+        discrepancyStatus: "resolved",
+        resolutionNote: "Accepted, after review",
+        resolvedBy: "ops@example.com",
+        resolvedAt: "2026-06-27T12:10:00.000Z"
+      }
+    ]);
+
+    const csv = await service.exportSettlementReport("mer_test");
+
+    expect(csv).toContain('"Demo, ""Payments"""');
+    expect(csv).toContain('"Accepted, after review"');
+    expect(repository.getSettlementReportRows).toHaveBeenCalledWith("mer_test");
   });
 
   it("hashes and forwards a validated import with actor context", async () => {

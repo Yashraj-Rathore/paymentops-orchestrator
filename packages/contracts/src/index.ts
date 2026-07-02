@@ -1,4 +1,4 @@
-﻿export interface HealthResponse {
+export interface HealthResponse {
   status: "ok";
   service: string;
   environment: string;
@@ -236,6 +236,8 @@ export interface ReconciliationDiscrepancySummary {
   actualAmountMinor: number;
   expectedCurrency: string | null;
   actualCurrency: string;
+  resolutionNote: string | null;
+  resolvedBy: string | null;
   createdAt: string;
   resolvedAt: string | null;
 }
@@ -265,6 +267,10 @@ export interface CreateReconciliationImportRequest {
   csv: string;
 }
 
+export interface ResolveReconciliationDiscrepancyRequest {
+  resolutionNote: string;
+}
+
 export interface TenantSummary {
   id: string;
   name: string;
@@ -272,10 +278,12 @@ export interface TenantSummary {
   createdAt: string;
 }
 
+export type UserMembershipRole = Extract<AuthRole, "merchant_owner" | "developer">;
+
 export interface UserMembershipSummary {
   id: string;
   email: string;
-  role: string;
+  role: UserMembershipRole;
   status: "active" | "invited" | "disabled";
   createdAt: string;
 }
@@ -357,8 +365,28 @@ export interface CreateTenantRequest {
   ownerEmail?: string;
 }
 
+export interface UpdateTenantRequest {
+  name?: string;
+  status?: TenantSummary["status"];
+}
+
+export interface CreateMembershipRequest {
+  email: string;
+  role: UserMembershipRole;
+  status?: UserMembershipSummary["status"];
+}
+
+export interface UpdateMembershipRequest {
+  role?: UserMembershipRole;
+  status?: UserMembershipSummary["status"];
+}
+
 export interface CreateApiClientRequest {
   name: string;
+}
+
+export interface UpdateApiClientRequest {
+  status: ApiClientSummary["status"];
 }
 
 export interface CreateApiKeyRequest {
@@ -368,10 +396,35 @@ export interface CreateApiKeyRequest {
   expiresAt?: string | null;
 }
 
+export interface RotateApiKeyRequest {
+  name?: string;
+  permissions?: string[];
+  expiresAt?: string | null;
+}
+
+export interface RevokeApiKeyResponse {
+  id: string;
+  status: "revoked";
+  revokedAt: string;
+}
+
 export interface CreateWebhookEndpointRequest {
   url: string;
   description?: string | null;
   eventSubscriptions?: string[];
+}
+
+export interface UpdateWebhookEndpointRequest {
+  url?: string;
+  description?: string | null;
+  eventSubscriptions?: string[];
+  status?: WebhookEndpointSummary["status"];
+}
+
+export interface DeleteWebhookEndpointResponse {
+  id: string;
+  deleted: true;
+  deletedAt: string;
 }
 
 export const foundationHealthContract = {

@@ -229,8 +229,12 @@ module "web" {
     NODE_ENV                    = "production"
     NITRO_HOST                  = "0.0.0.0"
     NITRO_PORT                  = "3001"
-    NUXT_PUBLIC_API_BASE_URL    = "http://${aws_lb.application.dns_name}"
+    NUXT_PUBLIC_API_BASE_URL    = local.public_url
     NUXT_PUBLIC_DEV_ADMIN_TOKEN = ""
+    NUXT_PUBLIC_AUTH_MODE       = "auth0"
+    NUXT_PUBLIC_AUTH0_DOMAIN    = var.auth0_domain
+    NUXT_PUBLIC_AUTH0_CLIENT_ID = var.auth0_client_id
+    NUXT_PUBLIC_AUTH0_AUDIENCE  = var.auth0_audience
   }
   log_group_name       = aws_cloudwatch_log_group.service["web"].name
   aws_region           = var.aws_region
@@ -239,5 +243,5 @@ module "web" {
   capacity_provider    = local.capacity_provider
   tags                 = local.common_tags
 
-  depends_on = [aws_lb_listener.http, module.api, terraform_data.deployment_guard]
+  depends_on = [aws_lb_listener_rule.api, module.api, terraform_data.deployment_guard]
 }

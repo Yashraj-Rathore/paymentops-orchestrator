@@ -107,14 +107,28 @@ export class AuthService {
     });
 
     const payload = result.payload;
+    const email = stringClaim(payload.email);
+    const tokenRoles = rolesFromPayload(payload, this.config.auth.roleClaim);
+    const memberships = email
+      ? await this.repository.findActiveMembershipsByEmail(email)
+      : [];
+    const isOperationsAdmin = tokenRoles.includes("operations_admin");
+    const roles = isOperationsAdmin
+      ? tokenRoles
+      : [
+          ...new Set([
+            ...tokenRoles.filter((role) => role === "developer"),
+            ...memberships.map((membership) => membership.role)
+          ])
+        ];
 
     return {
       type: "jwt",
       subject: payload.sub ?? "unknown-subject",
-      email: stringClaim(payload.email),
-      roles: rolesFromPayload(payload, this.config.auth.roleClaim),
+      email,
+      roles,
       permissions: stringArrayClaim(payload.permissions),
-      tenantId: null,
+      tenantId: memberships[0]?.tenantExternalId ?? null,
       apiClientId: null,
       apiKeyId: null
     };

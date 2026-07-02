@@ -8,11 +8,27 @@ import { AuthController } from "./auth.controller.js";
 import { AuthRepository } from "./auth.repository.js";
 import { AuthService } from "./auth.service.js";
 import { RolesGuard } from "./roles.guard.js";
+import { TenantAccessGuard } from "./tenant-access.guard.js";
 
 @Module({
   imports: [DatabaseModule],
   controllers: [AuthController],
-  providers: [AuthRepository, AuthService, AdminAuthGuard, RolesGuard, ApiKeyAuthGuard, ApiKeyPermissionsGuard],
-  exports: [AuthService, AdminAuthGuard, RolesGuard, ApiKeyAuthGuard, ApiKeyPermissionsGuard]
+  providers: [
+    AuthRepository,
+    AuthService,
+    AdminAuthGuard,
+    TenantAccessGuard,
+    RolesGuard,
+    ApiKeyAuthGuard,
+    ApiKeyPermissionsGuard
+  ],
+  exports: [
+    AuthService,
+    AdminAuthGuard,
+    TenantAccessGuard,
+    RolesGuard,
+    ApiKeyAuthGuard,
+    ApiKeyPermissionsGuard
+  ]
 })
 export class AuthModule {}

@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import type { UserMembershipRole } from "@paymentops/contracts";
 import sql from "mssql";
 
 import { DatabaseService } from "../database/database.service.js";
@@ -13,6 +14,11 @@ interface ApiKeyAuthRow {
   api_client_external_id: string;
 }
 
+interface MembershipAuthRow {
+  tenant_external_id: string;
+  role: UserMembershipRole;
+}
+
 export interface ActiveApiKeyRecord {
   apiKeyId: string;
   apiKeyExternalId: string;
@@ -21,6 +27,11 @@ export interface ActiveApiKeyRecord {
   apiClientId: string;
   apiClientExternalId: string;
   permissions: string[];
+}
+
+export interface AuthMembershipRecord {
+  tenantExternalId: string;
+  role: UserMembershipRole;
 }
 
 @Injectable()
@@ -71,5 +82,34 @@ WHERE api_keys.key_hash = @keyHash
       apiClientExternalId: row.api_client_external_id,
       permissions: JSON.parse(row.permissions_json) as string[]
     };
+  }
+
+  async findActiveMembershipsByEmail(email: string): Promise<AuthMembershipRecord[]> {
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("email", sql.NVarChar(256), email.toLowerCase())
+      .query<MembershipAuthRow>(`
+SELECT tenants.external_id AS tenant_external_id, user_memberships.role
+FROM dbo.user_memberships
+INNER JOIN dbo.tenants ON tenants.id = user_memberships.tenant_id
+WHERE LOWER(user_memberships.user_email) = @email
+  AND user_memberships.status = N'active'
+  AND tenants.status = N'active'
+ORDER BY user_memberships.created_at ASC;
+`);
+
+    return result.recordset.map((row) => ({
+      tenantExternalId: row.tenant_external_id,
+      role: row.role
+    }));
+  }
+
+  async findActiveMembership(
+    tenantExternalId: string,
+    email: string
+  ): Promise<AuthMembershipRecord | null> {
+    const memberships = await this.findActiveMembershipsByEmail(email);
+    return memberships.find((membership) => membership.tenantExternalId === tenantExternalId) ?? null;
   }
 }

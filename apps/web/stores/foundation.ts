@@ -1,9 +1,11 @@
 import type {
   ApiClientSummary,
+  AuthSessionResponse,
   ApprovalDecisionResponse,
   CreateApiClientRequest,
   CreateApiKeyRequest,
   CreateApiKeyResponse,
+  CreateMembershipRequest,
   CreatePayoutRequest,
   CreatePayoutResponse,
   CreateTenantRequest,
@@ -13,12 +15,20 @@ import type {
   ReconciliationImportDetails,
   ReconciliationImportSummary,
   CreateReconciliationImportRequest,
+  ResolveReconciliationDiscrepancyRequest,
   TenantDashboardResponse,
-  TenantSummary
+  TenantSummary,
+  UpdateApiClientRequest,
+  UpdateMembershipRequest,
+  UpdateTenantRequest,
+  UpdateWebhookEndpointRequest,
+  UserMembershipSummary,
+  WebhookEndpointSummary
 } from "@paymentops/contracts";
 import { defineStore } from "pinia";
 
 interface FoundationState {
+  session: AuthSessionResponse | null;
   dashboard: TenantDashboardResponse | null;
   activeTenantId: string | null;
   revealedApiKeySecret: string | null;
@@ -36,6 +46,7 @@ interface FoundationState {
 
 export const useFoundationStore = defineStore("foundation", {
   state: (): FoundationState => ({
+    session: null,
     dashboard: null,
     activeTenantId: null,
     revealedApiKeySecret: null,
@@ -55,6 +66,13 @@ export const useFoundationStore = defineStore("foundation", {
     tenantId: (state) => state.dashboard?.tenant.id ?? state.activeTenantId
   },
   actions: {
+    async loadSession(apiBaseUrl: string, adminCredential: string) {
+      this.session = await $fetch<AuthSessionResponse>(apiBaseUrl + "/v1/auth/admin/session", {
+        headers: adminHeaders(adminCredential)
+      });
+      return this.session;
+    },
+
     async load(apiBaseUrl: string, devAdminToken: string, tenantId?: string | null) {
       this.loading = true;
       this.error = null;
@@ -92,6 +110,60 @@ export const useFoundationStore = defineStore("foundation", {
       });
     },
 
+    async updateTenant(apiBaseUrl: string, devAdminToken: string, body: UpdateTenantRequest) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        await $fetch<TenantSummary>(apiBaseUrl + "/v1/tenants/" + tenantId, {
+          method: "PATCH",
+          headers: adminHeaders(devAdminToken),
+          body
+        });
+        this.message = "Updated tenant " + tenantId;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async createMembership(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      body: CreateMembershipRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        const membership = await $fetch<UserMembershipSummary>(
+          apiBaseUrl + "/v1/tenants/" + tenantId + "/memberships",
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
+        this.message = "Added " + membership.email;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async updateMembership(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      membershipId: string,
+      body: UpdateMembershipRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        await $fetch<UserMembershipSummary>(
+          apiBaseUrl + "/v1/tenants/" + tenantId + "/memberships/" + membershipId,
+          {
+            method: "PATCH",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
+        this.message = "Updated tenant member";
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
     async createApiClient(apiBaseUrl: string, devAdminToken: string, body: CreateApiClientRequest) {
       const tenantId = requireTenantId(this.dashboard);
 
@@ -105,6 +177,27 @@ export const useFoundationStore = defineStore("foundation", {
           }
         );
         this.message = `Created API client ${client.name}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async updateApiClient(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      clientId: string,
+      body: UpdateApiClientRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        await $fetch<ApiClientSummary>(
+          apiBaseUrl + "/v1/tenants/" + tenantId + "/api-clients/" + clientId,
+          {
+            method: "PATCH",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
+        this.message = (body.status === "disabled" ? "Disabled" : "Enabled") + " API client";
         await this.load(apiBaseUrl, devAdminToken, tenantId);
       });
     },
@@ -127,6 +220,36 @@ export const useFoundationStore = defineStore("foundation", {
       });
     },
 
+    async rotateApiKey(apiBaseUrl: string, devAdminToken: string, apiKeyId: string) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        const apiKey = await $fetch<CreateApiKeyResponse>(
+          apiBaseUrl + "/v1/tenants/" + tenantId + "/api-keys/" + apiKeyId + "/rotate",
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body: {}
+          }
+        );
+        this.revealedApiKeySecret = apiKey.secret;
+        this.message = "Rotated API key " + apiKeyId;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async revokeApiKey(apiBaseUrl: string, devAdminToken: string, apiKeyId: string) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        await $fetch(apiBaseUrl + "/v1/tenants/" + tenantId + "/api-keys/" + apiKeyId + "/revoke", {
+          method: "POST",
+          headers: adminHeaders(devAdminToken),
+          body: {}
+        });
+        this.message = "Revoked API key " + apiKeyId;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
     async createWebhookEndpoint(
       apiBaseUrl: string,
       devAdminToken: string,
@@ -145,6 +268,39 @@ export const useFoundationStore = defineStore("foundation", {
         );
         this.revealedWebhookSecret = webhook.secret;
         this.message = `Registered webhook ${webhook.id}`;
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async updateWebhookEndpoint(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      webhookId: string,
+      body: UpdateWebhookEndpointRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        await $fetch<WebhookEndpointSummary>(
+          apiBaseUrl + "/v1/tenants/" + tenantId + "/webhook-endpoints/" + webhookId,
+          {
+            method: "PATCH",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
+        this.message = "Updated webhook endpoint";
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
+    async deleteWebhookEndpoint(apiBaseUrl: string, devAdminToken: string, webhookId: string) {
+      const tenantId = requireTenantId(this.dashboard);
+      await this.mutate(async () => {
+        await $fetch(apiBaseUrl + "/v1/tenants/" + tenantId + "/webhook-endpoints/" + webhookId, {
+          method: "DELETE",
+          headers: adminHeaders(devAdminToken)
+        });
+        this.message = "Deleted webhook " + webhookId;
         await this.load(apiBaseUrl, devAdminToken, tenantId);
       });
     },
@@ -264,6 +420,32 @@ export const useFoundationStore = defineStore("foundation", {
       });
     },
 
+    async resolveReconciliationDiscrepancy(
+      apiBaseUrl: string,
+      devAdminToken: string,
+      discrepancyId: string,
+      body: ResolveReconciliationDiscrepancyRequest
+    ) {
+      const tenantId = requireTenantId(this.dashboard);
+      const importId = this.selectedReconciliation?.id;
+
+      await this.mutate(async () => {
+        await $fetch(
+          `${apiBaseUrl}/v1/tenants/${tenantId}/reconciliation/discrepancies/${discrepancyId}/resolve`,
+          {
+            method: "POST",
+            headers: adminHeaders(devAdminToken),
+            body
+          }
+        );
+        this.message = `Resolved discrepancy ${discrepancyId}`;
+        if (importId) {
+          await this.selectReconciliationImport(apiBaseUrl, devAdminToken, importId);
+        }
+        await this.load(apiBaseUrl, devAdminToken, tenantId);
+      });
+    },
+
     async replayWebhookDelivery(apiBaseUrl: string, devAdminToken: string, deliveryId: string) {
       const tenantId = requireTenantId(this.dashboard);
 
@@ -305,10 +487,12 @@ export const useFoundationStore = defineStore("foundation", {
   }
 });
 
-function adminHeaders(devAdminToken: string): Record<string, string> {
-  return devAdminToken.trim().length > 0
-    ? { "x-paymentops-dev-admin-token": devAdminToken.trim() }
-    : {};
+function adminHeaders(adminCredential: string): Record<string, string> {
+  const credential = adminCredential.trim();
+  if (!credential) return {};
+  return credential.startsWith("Bearer ")
+    ? { authorization: credential }
+    : { "x-paymentops-dev-admin-token": credential };
 }
 
 function apiKeyHeaders(apiKeySecret: string, idempotencyKey: string): Record<string, string> {

@@ -76,6 +76,112 @@ jobs:
           path: test-results/e2e-compose.log
           if-no-files-found: ignore
 
+  contracts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify provider contract
+        run: pnpm test:contract
+
+      - name: Upload Pact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-pact
+          path: pacts
+          if-no-files-found: error
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start application
+        run: docker compose up --detach --build --wait api worker web
+
+      - name: Run Playwright
+        run: pnpm test:ui --project=chromium --project=mobile-chromium
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results/playwright
+          if-no-files-found: ignore
+
+      - name: Stop application
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  load-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start API
+        run: docker compose up --detach --build --wait api
+
+      - name: Run k6 smoke profile
+        run: docker run --rm --network host -v "$PWD:/work" -w /work grafana/k6:latest run tests/load/payout-smoke.js
+
+      - name: Capture Compose diagnostics
+        if: failure()
+        run: mkdir -p test-results && docker compose logs --no-color > test-results/load-compose.log
+
+      - name: Upload load diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-compose-logs
+          path: test-results/load-compose.log
+          if-no-files-found: ignore
+
+      - name: Stop application
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
   terraform:
     runs-on: ubuntu-latest
 

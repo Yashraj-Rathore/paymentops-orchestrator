@@ -14,5 +14,6 @@ export interface AuthenticatedPrincipal {
 
 export interface AuthenticatedRequest {
   headers: IncomingHttpHeaders;
+  params?: Record<string, string | undefined>;
   auth?: AuthenticatedPrincipal;
 }

@@ -16,3 +16,14 @@ auth0_audience = "https://api.paymentops.example"
 # After pushing the workspace image to the output ECR repository:
 # deploy_services = true
 # image_tag        = "<git-sha>"
+# Dashboard Auth0 SPA client.
+auth0_client_id = "your_auth0_spa_client_id"
+
+# Production-style edge configuration. Use create_certificate=true to let
+# Terraform request and DNS-validate ACM, or provide certificate_arn.
+domain_name        = "paymentops.example.com"
+route53_zone_id    = "Z0123456789EXAMPLE"
+enable_https       = true
+create_certificate = true
+enable_waf         = true
+alert_email        = "paymentops-alerts@example.com"

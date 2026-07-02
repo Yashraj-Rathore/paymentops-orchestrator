@@ -99,3 +99,50 @@ variable "tags" {
   description = "Additional tags applied to resources."
   default     = {}
 }
+variable "auth0_client_id" {
+  type        = string
+  description = "Auth0 SPA client identifier used by the dashboard."
+  default     = ""
+}
+
+variable "domain_name" {
+  type        = string
+  description = "Optional Route 53 domain name for the public application."
+  default     = ""
+}
+
+variable "route53_zone_id" {
+  type        = string
+  description = "Route 53 hosted zone identifier used for application and ACM records."
+  default     = ""
+}
+
+variable "enable_https" {
+  type        = bool
+  description = "Enable the ALB HTTPS listener and redirect HTTP traffic."
+  default     = false
+}
+
+variable "create_certificate" {
+  type        = bool
+  description = "Create and DNS-validate an ACM certificate for domain_name."
+  default     = false
+}
+
+variable "certificate_arn" {
+  type        = string
+  description = "Existing ACM certificate ARN when create_certificate is false."
+  default     = ""
+}
+
+variable "enable_waf" {
+  type        = bool
+  description = "Associate AWS managed WAF protections with the public ALB."
+  default     = true
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Optional email address subscribed to staging CloudWatch alarms."
+  default     = ""
+}

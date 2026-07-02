@@ -12,12 +12,13 @@ import { AdminAuthGuard } from "../auth/admin-auth.guard.js";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RequireRoles } from "../auth/roles.decorator.js";
 import { RolesGuard } from "../auth/roles.guard.js";
+import { TenantAccessGuard } from "../auth/tenant-access.guard.js";
 import { ApprovalsService } from "./approvals.service.js";
 
 @ApiTags("approvals")
 @ApiBearerAuth()
 @ApiHeader({ name: "x-paymentops-dev-admin-token", required: false })
-@UseGuards(AdminAuthGuard, RolesGuard)
+@UseGuards(AdminAuthGuard, TenantAccessGuard, RolesGuard)
 @Controller("tenants/:tenantId/approvals")
 export class ApprovalsController {
   constructor(@Inject(ApprovalsService) private readonly approvals: ApprovalsService) {}

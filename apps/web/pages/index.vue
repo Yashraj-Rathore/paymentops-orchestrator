@@ -3,6 +3,7 @@ import { useRuntimeConfig } from "#app";
 import {
   Activity,
   AlertCircle,
+  Ban,
   Banknote,
   Bell,
   Check,
@@ -14,11 +15,14 @@ import {
   Code2,
   Copy,
   Database,
+  Download,
   FileSearch,
   FileUp,
   Gauge,
   KeyRound,
   LayoutDashboard,
+  LogIn,
+  LogOut,
   Menu,
   Plus,
   RefreshCw,
@@ -28,12 +32,16 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
+  UserPlus,
   Users,
   Webhook,
   X
 } from "@lucide/vue";
+import type { WebhookEndpointSummary } from "@paymentops/contracts";
 import { storeToRefs } from "pinia";
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { useAdminAuth } from "~/composables/useAdminAuth";
 import { useFoundationStore } from "~/stores/foundation";
 
 type ViewId =
@@ -44,11 +52,20 @@ type ViewId =
   | "webhooks"
   | "reconciliation"
   | "audit";
-type ActionId = "tenant" | "client" | "apiKey" | "payout" | "webhook" | "settlement";
+type ActionId = "tenant" | "member" | "client" | "apiKey" | "payout" | "webhook" | "settlement";
 
 const config = useRuntimeConfig();
 const apiBaseUrl = String(config.public.apiBaseUrl);
-const devAdminToken = String(config.public.devAdminToken ?? "");
+let devAdminToken = String(config.public.devAdminToken ?? "");
+const adminAuth = useAdminAuth();
+const {
+  ready: authReady,
+  authenticated: authAuthenticated,
+  configured: authConfigured,
+  credential: authCredential,
+  user: authUser,
+  error: authError
+} = adminAuth;
 const store = useFoundationStore();
 const {
   dashboard,
@@ -70,9 +87,15 @@ const searchQuery = ref("");
 const toastVisible = ref(false);
 const copiedSecret = ref(false);
 const settlementFileInput = ref<HTMLInputElement | null>(null);
+const resolvingDiscrepancyId = ref<string | null>(null);
+const resolutionNote = ref("");
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 const tenantForm = reactive({ name: "", ownerEmail: "" });
+const memberForm = reactive({
+  email: "",
+  role: "developer" as "developer" | "merchant_owner"
+});
 const clientForm = reactive({ name: "" });
 const apiKeyForm = reactive({
   name: "",
@@ -98,6 +121,7 @@ const reconciliationForm = reactive({
   fileName: "",
   csv: ""
 });
+const editingWebhookId = ref<string | null>(null);
 
 const navItems = [
   { id: "overview" as const, label: "Overview", icon: LayoutDashboard },
@@ -111,6 +135,7 @@ const navItems = [
 
 const actionLabels: Record<ActionId, string> = {
   tenant: "Create tenant",
+  member: "Add tenant member",
   client: "Create API client",
   apiKey: "Mint API key",
   payout: "Create payout",
@@ -121,6 +146,10 @@ const actionLabels: Record<ActionId, string> = {
 const pageTitle = computed(
   () => navItems.find((item) => item.id === activeView.value)?.label ?? "Overview"
 );
+const drawerTitle = computed(() => {
+  if (activeAction.value === "webhook" && editingWebhookId.value) return "Update webhook";
+  return activeAction.value ? actionLabels[activeAction.value] : "";
+});
 const query = computed(() => searchQuery.value.trim().toLowerCase());
 const payoutVolume = computed(() =>
   (dashboard.value?.payouts ?? []).reduce((sum, payout) => sum + payout.amountMinor, 0)
@@ -175,9 +204,14 @@ const revealedSecret = computed(() => {
   return null;
 });
 
-onMounted(() => {
+onMounted(async () => {
   payoutForm.idempotencyKey = newIdempotencyKey();
-  void store.load(apiBaseUrl, devAdminToken);
+  await adminAuth.initialize();
+  devAdminToken = authCredential.value;
+  if (!authAuthenticated.value) return;
+
+  const session = await store.loadSession(apiBaseUrl, devAdminToken);
+  await store.load(apiBaseUrl, devAdminToken, session.tenantId);
 });
 
 onBeforeUnmount(() => {
@@ -219,6 +253,7 @@ function openAction(action: ActionId) {
 
 function closeAction() {
   activeAction.value = null;
+  editingWebhookId.value = null;
 }
 
 async function refreshDashboard() {
@@ -237,12 +272,43 @@ async function submitTenant() {
   }
 }
 
+async function toggleTenant() {
+  if (!dashboard.value) return;
+  await store.updateTenant(apiBaseUrl, devAdminToken, {
+    status: dashboard.value.tenant.status === "active" ? "suspended" : "active"
+  });
+}
+
+async function submitMember() {
+  await store.createMembership(apiBaseUrl, devAdminToken, {
+    email: memberForm.email,
+    role: memberForm.role,
+    status: "invited"
+  });
+  if (!error.value) {
+    memberForm.email = "";
+    closeAction();
+  }
+}
+
+async function toggleMembership(memberId: string, status: string) {
+  await store.updateMembership(apiBaseUrl, devAdminToken, memberId, {
+    status: status === "active" ? "disabled" : "active"
+  });
+}
+
 async function submitApiClient() {
   await store.createApiClient(apiBaseUrl, devAdminToken, { name: clientForm.name });
   if (!error.value) {
     clientForm.name = "";
     closeAction();
   }
+}
+
+async function toggleApiClient(clientId: string, status: string) {
+  await store.updateApiClient(apiBaseUrl, devAdminToken, clientId, {
+    status: status === "active" ? "disabled" : "active"
+  });
 }
 
 async function submitApiKey() {
@@ -258,18 +324,58 @@ async function submitApiKey() {
   }
 }
 
+async function rotateApiKey(apiKeyId: string) {
+  store.clearWebhookSecret();
+  await store.rotateApiKey(apiBaseUrl, devAdminToken, apiKeyId);
+}
+
+async function revokeApiKey(apiKeyId: string) {
+  await store.revokeApiKey(apiBaseUrl, devAdminToken, apiKeyId);
+}
+
+function editWebhook(endpoint: WebhookEndpointSummary) {
+  editingWebhookId.value = endpoint.id;
+  webhookForm.url = endpoint.url;
+  webhookForm.description = endpoint.description ?? "";
+  webhookForm.eventSubscriptions = endpoint.eventSubscriptions.join(", ");
+  openAction("webhook");
+}
+
 async function submitWebhook() {
   store.clearApiKeySecret();
-  await store.createWebhookEndpoint(apiBaseUrl, devAdminToken, {
+  const body = {
     url: webhookForm.url,
     description: webhookForm.description || null,
     eventSubscriptions: csv(webhookForm.eventSubscriptions)
-  });
+  };
+  if (editingWebhookId.value) {
+    await store.updateWebhookEndpoint(apiBaseUrl, devAdminToken, editingWebhookId.value, body);
+  } else {
+    await store.createWebhookEndpoint(apiBaseUrl, devAdminToken, body);
+  }
   if (!error.value) {
     webhookForm.url = "";
     webhookForm.description = "";
     closeAction();
   }
+}
+
+async function toggleWebhook(endpoint: WebhookEndpointSummary) {
+  await store.updateWebhookEndpoint(apiBaseUrl, devAdminToken, endpoint.id, {
+    status: endpoint.status === "active" ? "disabled" : "active"
+  });
+}
+
+async function deleteWebhook(webhookId: string) {
+  await store.deleteWebhookEndpoint(apiBaseUrl, devAdminToken, webhookId);
+}
+
+async function login() {
+  await adminAuth.login();
+}
+
+async function logout() {
+  await adminAuth.logout();
 }
 
 async function submitPayout() {
@@ -363,7 +469,51 @@ async function submitReconciliation() {
 }
 
 async function selectReconciliationImport(importId: string) {
+  resolvingDiscrepancyId.value = null;
+  resolutionNote.value = "";
   await store.selectReconciliationImport(apiBaseUrl, devAdminToken, importId);
+}
+
+function startResolvingDiscrepancy(discrepancyId: string) {
+  resolvingDiscrepancyId.value = discrepancyId;
+  resolutionNote.value = "";
+}
+
+async function resolveDiscrepancy(discrepancyId: string) {
+  if (!resolutionNote.value.trim()) return;
+  await store.resolveReconciliationDiscrepancy(apiBaseUrl, devAdminToken, discrepancyId, {
+    resolutionNote: resolutionNote.value.trim()
+  });
+  if (!error.value) {
+    resolvingDiscrepancyId.value = null;
+    resolutionNote.value = "";
+  }
+}
+
+async function downloadSettlementReport() {
+  if (!dashboard.value) return;
+  const headers: Record<string, string> = {};
+  if (devAdminToken.startsWith("Bearer ")) {
+    headers.authorization = devAdminToken;
+  } else if (devAdminToken) {
+    headers["x-paymentops-dev-admin-token"] = devAdminToken;
+  }
+
+  const response = await fetch(
+    `${apiBaseUrl}/v1/tenants/${dashboard.value.tenant.id}/reconciliation/reports/settlements.csv`,
+    { headers }
+  );
+  if (!response.ok) {
+    error.value = "Unable to export settlement report";
+    return;
+  }
+
+  const reportUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = reportUrl;
+  link.download = `${dashboard.value.tenant.id}-settlements.csv`;
+  link.click();
+  URL.revokeObjectURL(reportUrl);
 }
 
 async function copySecret() {
@@ -418,7 +568,25 @@ function newIdempotencyKey(): string {
 </script>
 
 <template>
-  <main class="app-shell">
+  <section v-if="!authReady" class="auth-gate" aria-live="polite">
+    <RefreshCw :size="20" class="spin" />
+    <strong>Connecting to PaymentOps</strong>
+  </section>
+
+  <section v-else-if="adminAuth.authMode === 'auth0' && !authAuthenticated" class="auth-gate">
+    <div class="brand-symbol"><ShieldCheck :size="21" /></div>
+    <div>
+      <p>PaymentOps Orchestrator</p>
+      <h1>Operator access</h1>
+      <span v-if="authError">{{ authError }}</span>
+      <span v-else>Sign in with your organization account.</span>
+    </div>
+    <button class="primary-button" type="button" :disabled="!authConfigured" @click="login">
+      <LogIn :size="17" /> Sign in
+    </button>
+  </section>
+
+  <main v-else class="app-shell">
     <div
       v-if="mobileNavOpen"
       class="mobile-scrim"
@@ -507,7 +675,7 @@ function newIdempotencyKey(): string {
         <div class="header-controls">
           <label class="global-search">
             <Search :size="17" />
-            <input v-model="searchQuery" type="search" placeholder="Search current view">
+            <input v-model="searchQuery" type="search" placeholder="Search current view" />
           </label>
           <button
             class="icon-button"
@@ -517,6 +685,15 @@ function newIdempotencyKey(): string {
             @click="refreshDashboard"
           >
             <RefreshCw :size="18" :class="{ spin: loading }" />
+          </button>
+          <button
+            v-if="adminAuth.authMode === 'auth0'"
+            class="icon-button"
+            type="button"
+            :title="'Sign out ' + (authUser?.email ?? '')"
+            @click="logout"
+          >
+            <LogOut :size="18" />
           </button>
           <button class="primary-button header-action" type="button" @click="openAction('payout')">
             <Plus :size="17" />
@@ -573,7 +750,9 @@ function newIdempotencyKey(): string {
                 <small>Merchant webhooks</small>
               </div>
               <strong>{{ deliveryRate }}%</strong>
-              <span class="metric-foot">{{ dashboard?.metrics.webhookDeliveries ?? 0 }} attempts</span>
+              <span class="metric-foot"
+                >{{ dashboard?.metrics.webhookDeliveries ?? 0 }} attempts</span
+              >
             </article>
             <article class="metric-card">
               <div class="metric-icon amber"><Clock3 :size="19" /></div>
@@ -884,6 +1063,15 @@ function newIdempotencyKey(): string {
                 <span>Manage clients, credentials, and tenant membership.</span>
               </div>
               <div class="button-group">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="saving || !dashboard"
+                  @click="toggleTenant"
+                >
+                  <Ban :size="16" />
+                  {{ dashboard?.tenant.status === "active" ? "Suspend tenant" : "Activate tenant" }}
+                </button>
                 <button class="secondary-button" type="button" @click="openAction('client')">
                   <Server :size="16" /> API client
                 </button>
@@ -920,9 +1108,20 @@ function newIdempotencyKey(): string {
                       <strong>{{ client.name }}</strong>
                       <span class="mono">{{ client.id }}</span>
                     </div>
-                    <span class="status-badge" :class="statusClass(client.status)">
-                      <i />{{ client.status }}
-                    </span>
+                    <div class="resource-actions">
+                      <span class="status-badge" :class="statusClass(client.status)">
+                        <i />{{ client.status }}
+                      </span>
+                      <button
+                        class="icon-button"
+                        type="button"
+                        :title="client.status === 'active' ? 'Disable client' : 'Enable client'"
+                        :disabled="saving"
+                        @click="toggleApiClient(client.id, client.status)"
+                      >
+                        <Ban :size="15" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </article>
@@ -950,7 +1149,27 @@ function newIdempotencyKey(): string {
                       <span class="mono">{{ apiKey.keyPrefix }}...</span>
                       <small>{{ apiKey.permissions.join(" ? ") }}</small>
                     </div>
-                    <span class="status-badge status-active"><i /> active</span>
+                    <div class="resource-actions">
+                      <span class="status-badge status-active"><i /> active</span>
+                      <button
+                        class="icon-button"
+                        type="button"
+                        title="Rotate API key"
+                        :disabled="saving"
+                        @click="rotateApiKey(apiKey.id)"
+                      >
+                        <RotateCcw :size="15" />
+                      </button>
+                      <button
+                        class="icon-button danger-action"
+                        type="button"
+                        title="Revoke API key"
+                        :disabled="saving"
+                        @click="revokeApiKey(apiKey.id)"
+                      >
+                        <Ban :size="15" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </article>
@@ -964,10 +1183,10 @@ function newIdempotencyKey(): string {
                   <button
                     class="icon-button"
                     type="button"
-                    title="Create tenant"
-                    @click="openAction('tenant')"
+                    title="Add tenant member"
+                    @click="openAction('member')"
                   >
-                    <Plus :size="17" />
+                    <UserPlus :size="17" />
                   </button>
                 </header>
                 <div class="resource-list">
@@ -981,9 +1200,20 @@ function newIdempotencyKey(): string {
                       <strong>{{ member.email }}</strong>
                       <span>{{ member.role.replaceAll("_", " ") }}</span>
                     </div>
-                    <span class="status-badge" :class="statusClass(member.status)">
-                      <i />{{ member.status }}
-                    </span>
+                    <div class="resource-actions">
+                      <span class="status-badge" :class="statusClass(member.status)">
+                        <i />{{ member.status }}
+                      </span>
+                      <button
+                        class="icon-button"
+                        type="button"
+                        :title="member.status === 'active' ? 'Disable member' : 'Activate member'"
+                        :disabled="saving"
+                        @click="toggleMembership(member.id, member.status)"
+                      >
+                        <Ban :size="15" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </article>
@@ -1042,9 +1272,38 @@ function newIdempotencyKey(): string {
                     <span class="mono">{{ endpoint.url }}</span>
                     <small>{{ endpoint.eventSubscriptions.join(" ? ") }}</small>
                   </div>
-                  <span class="status-badge" :class="statusClass(endpoint.status)">
-                    <i />{{ endpoint.status }}
-                  </span>
+                  <div class="resource-actions">
+                    <span class="status-badge" :class="statusClass(endpoint.status)">
+                      <i />{{ endpoint.status }}
+                    </span>
+                    <button
+                      class="icon-button"
+                      type="button"
+                      title="Edit endpoint"
+                      :disabled="saving"
+                      @click="editWebhook(endpoint)"
+                    >
+                      <Settings2 :size="15" />
+                    </button>
+                    <button
+                      class="icon-button"
+                      type="button"
+                      :title="endpoint.status === 'active' ? 'Disable endpoint' : 'Enable endpoint'"
+                      :disabled="saving"
+                      @click="toggleWebhook(endpoint)"
+                    >
+                      <Ban :size="15" />
+                    </button>
+                    <button
+                      class="icon-button danger-action"
+                      type="button"
+                      title="Delete endpoint"
+                      :disabled="saving"
+                      @click="deleteWebhook(endpoint.id)"
+                    >
+                      <Trash2 :size="15" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </article>
@@ -1118,9 +1377,19 @@ function newIdempotencyKey(): string {
                 <h2>Reconciliation</h2>
                 <span>Compare provider settlement files with internal payout records.</span>
               </div>
-              <button class="primary-button" type="button" @click="openAction('settlement')">
-                <FileUp :size="17" /> Import settlement
-              </button>
+              <div class="button-group">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="!dashboard"
+                  @click="downloadSettlementReport"
+                >
+                  <Download :size="17" /> Export CSV
+                </button>
+                <button class="primary-button" type="button" @click="openAction('settlement')">
+                  <FileUp :size="17" /> Import settlement
+                </button>
+              </div>
             </header>
 
             <section class="reconciliation-layout">
@@ -1143,7 +1412,7 @@ function newIdempotencyKey(): string {
                   <span class="resource-icon blue"><FileSearch :size="17" /></span>
                   <span>
                     <strong>{{ item.fileName }}</strong>
-                    <small>{{ item.providerName }} ? {{ formatDate(item.createdAt) }}</small>
+                    <small>{{ item.providerName }} / {{ formatDate(item.createdAt) }}</small>
                   </span>
                   <span class="import-counts">
                     <strong>{{ item.matchedCount }}/{{ item.rowCount }}</strong>
@@ -1210,9 +1479,9 @@ function newIdempotencyKey(): string {
                           discrepancy.expectedAmountMinor === null
                             ? "No payout"
                             : formatMinor(
-                              discrepancy.expectedAmountMinor,
-                              discrepancy.expectedCurrency ?? discrepancy.actualCurrency
-                            )
+                                discrepancy.expectedAmountMinor,
+                                discrepancy.expectedCurrency ?? discrepancy.actualCurrency
+                              )
                         }}
                       </strong>
                     </div>
@@ -1222,9 +1491,47 @@ function newIdempotencyKey(): string {
                         {{ formatMinor(discrepancy.actualAmountMinor, discrepancy.actualCurrency) }}
                       </strong>
                     </div>
-                    <span class="status-badge" :class="statusClass(discrepancy.status)">
-                      <i />{{ discrepancy.status }}
-                    </span>
+                    <div class="exception-actions">
+                      <span class="status-badge" :class="statusClass(discrepancy.status)">
+                        <i />{{ discrepancy.status }}
+                      </span>
+                      <button
+                        v-if="discrepancy.status === 'open'"
+                        class="text-button"
+                        type="button"
+                        @click="startResolvingDiscrepancy(discrepancy.id)"
+                      >
+                        Resolve
+                      </button>
+                    </div>
+                    <form
+                      v-if="resolvingDiscrepancyId === discrepancy.id"
+                      class="resolution-form"
+                      @submit.prevent="resolveDiscrepancy(discrepancy.id)"
+                    >
+                      <input
+                        v-model="resolutionNote"
+                        required
+                        maxlength="1000"
+                        type="text"
+                        placeholder="Resolution note"
+                      />
+                      <button
+                        class="icon-button subtle"
+                        type="button"
+                        title="Cancel resolution"
+                        @click="resolvingDiscrepancyId = null"
+                      >
+                        <X :size="16" />
+                      </button>
+                      <button
+                        class="primary-button"
+                        type="submit"
+                        :disabled="saving || !resolutionNote.trim()"
+                      >
+                        <Check :size="16" /> Resolve
+                      </button>
+                    </form>
                   </div>
                 </div>
 
@@ -1374,7 +1681,8 @@ function newIdempotencyKey(): string {
                   <tbody>
                     <tr v-for="event in dashboard?.outboxEvents" :key="event.id">
                       <td>
-                        <strong>{{ event.eventType }}</strong><span>{{ event.id }}</span>
+                        <strong>{{ event.eventType }}</strong
+                        ><span>{{ event.id }}</span>
                       </td>
                       <td>{{ event.aggregateType }}</td>
                       <td>
@@ -1416,16 +1724,11 @@ function newIdempotencyKey(): string {
     <Teleport to="body">
       <div v-if="activeAction" class="drawer-layer" role="presentation">
         <button class="drawer-scrim" type="button" aria-label="Close panel" @click="closeAction" />
-        <aside
-          class="action-drawer"
-          role="dialog"
-          aria-modal="true"
-          :aria-label="actionLabels[activeAction]"
-        >
+        <aside class="action-drawer" role="dialog" aria-modal="true" :aria-label="drawerTitle">
           <header class="drawer-header">
             <div>
               <p>PaymentOps</p>
-              <h2>{{ actionLabels[activeAction] }}</h2>
+              <h2>{{ drawerTitle }}</h2>
             </div>
             <button class="icon-button" type="button" title="Close" @click="closeAction">
               <X :size="18" />
@@ -1445,7 +1748,7 @@ function newIdempotencyKey(): string {
                   required
                   type="text"
                   placeholder="Acme Marketplaces"
-                >
+                />
               </label>
               <label>
                 <span>Owner email</span>
@@ -1453,7 +1756,7 @@ function newIdempotencyKey(): string {
                   v-model="tenantForm.ownerEmail"
                   type="email"
                   placeholder="owner@example.com"
-                >
+                />
               </label>
               <div class="form-context">
                 <Users :size="17" />
@@ -1461,6 +1764,42 @@ function newIdempotencyKey(): string {
               </div>
               <button class="primary-button full-button" :disabled="saving" type="submit">
                 <Plus :size="17" /> Create tenant
+              </button>
+            </form>
+
+            <form
+              v-else-if="activeAction === 'member'"
+              class="action-form"
+              @submit.prevent="submitMember"
+            >
+              <label>
+                <span>Email address</span>
+                <input
+                  v-model="memberForm.email"
+                  required
+                  type="email"
+                  placeholder="developer@example.com"
+                />
+              </label>
+              <label>
+                <span>Tenant role</span>
+                <select v-model="memberForm.role">
+                  <option value="developer">Developer</option>
+                  <option value="merchant_owner">Merchant owner</option>
+                </select>
+              </label>
+              <div class="form-context">
+                <Users :size="17" />
+                <span
+                  >The membership starts invited and can be activated from the member list.</span
+                >
+              </div>
+              <button
+                class="primary-button full-button"
+                :disabled="saving || !dashboard"
+                type="submit"
+              >
+                <UserPlus :size="17" /> Add member
               </button>
             </form>
 
@@ -1476,11 +1815,13 @@ function newIdempotencyKey(): string {
                   required
                   type="text"
                   placeholder="Checkout service"
-                >
+                />
               </label>
               <div class="form-context">
                 <Server :size="17" />
-                <span>Client will belong to {{ dashboard?.tenant.name ?? "the active tenant" }}.</span>
+                <span
+                  >Client will belong to {{ dashboard?.tenant.name ?? "the active tenant" }}.</span
+                >
               </div>
               <button
                 class="primary-button full-button"
@@ -1503,7 +1844,7 @@ function newIdempotencyKey(): string {
                   required
                   type="text"
                   placeholder="Production checkout key"
-                >
+                />
               </label>
               <label>
                 <span>API client</span>
@@ -1520,7 +1861,7 @@ function newIdempotencyKey(): string {
               </label>
               <label>
                 <span>Permissions</span>
-                <input v-model="apiKeyForm.permissions" required type="text">
+                <input v-model="apiKeyForm.permissions" required type="text" />
               </label>
               <div class="form-context warning">
                 <KeyRound :size="17" />
@@ -1549,7 +1890,7 @@ function newIdempotencyKey(): string {
                   min="1"
                   step="1"
                   type="number"
-                >
+                />
                 <small>minor units</small>
               </div>
               <div class="form-split">
@@ -1564,12 +1905,12 @@ function newIdempotencyKey(): string {
                 </label>
                 <label>
                   <span>Reference</span>
-                  <input v-model="payoutForm.reference" type="text" placeholder="invoice-1042">
+                  <input v-model="payoutForm.reference" type="text" placeholder="invoice-1042" />
                 </label>
               </div>
               <label>
                 <span>Destination account</span>
-                <input v-model="payoutForm.destinationAccount" required type="text">
+                <input v-model="payoutForm.destinationAccount" required type="text" />
               </label>
               <label>
                 <span>API key secret</span>
@@ -1578,11 +1919,11 @@ function newIdempotencyKey(): string {
                   required
                   type="password"
                   placeholder="pops_sk_test_..."
-                >
+                />
               </label>
               <label>
                 <span>Idempotency key</span>
-                <input v-model="payoutForm.idempotencyKey" required type="text">
+                <input v-model="payoutForm.idempotencyKey" required type="text" />
               </label>
               <label>
                 <span>Description</span>
@@ -1613,7 +1954,7 @@ function newIdempotencyKey(): string {
                   required
                   type="url"
                   placeholder="https://example.com/paymentops"
-                >
+                />
               </label>
               <label>
                 <span>Description</span>
@@ -1621,7 +1962,7 @@ function newIdempotencyKey(): string {
                   v-model="webhookForm.description"
                   type="text"
                   placeholder="Production payout events"
-                >
+                />
               </label>
               <label>
                 <span>Subscribed events</span>
@@ -1629,21 +1970,23 @@ function newIdempotencyKey(): string {
               </label>
               <div class="form-context warning">
                 <Webhook :size="17" />
-                <span>The signing secret is shown once after registration.</span>
+                <span v-if="editingWebhookId">Existing signing secret remains active.</span>
+                <span v-else>The signing secret is shown once after registration.</span>
               </div>
               <button
                 class="primary-button full-button"
                 :disabled="saving || !dashboard"
                 type="submit"
               >
-                <Webhook :size="17" /> Register endpoint
+                <Webhook :size="17" />
+                {{ editingWebhookId ? "Update endpoint" : "Register endpoint" }}
               </button>
             </form>
 
             <form v-else class="action-form" @submit.prevent="submitReconciliation">
               <label>
                 <span>Provider</span>
-                <input v-model="reconciliationForm.providerName" required type="text">
+                <input v-model="reconciliationForm.providerName" required type="text" />
               </label>
               <label class="file-drop">
                 <FileUp :size="24" />
@@ -1656,7 +1999,7 @@ function newIdempotencyKey(): string {
                   accept=".csv,text/csv"
                   type="file"
                   @change="handleSettlementFile"
-                >
+                />
               </label>
               <button
                 class="secondary-button full-button"

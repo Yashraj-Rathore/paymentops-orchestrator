@@ -73,6 +73,9 @@ pnpm lint         Lint the workspace
 pnpm typecheck    Type-check all workspace projects
 pnpm test         Run unit tests
 pnpm test:e2e     Run the isolated Docker payout orchestration test
+pnpm test:contract Generate and verify the worker/provider Pact
+pnpm test:ui      Run Playwright tests against the running stack
+pnpm test:load    Run the k6 payout smoke profile against the running API
 pnpm db:migrate   Build shared packages and apply SQL Server migrations
 pnpm docker:up    Start the Docker Compose stack
 pnpm docker:down  Stop the Docker Compose stack
@@ -84,6 +87,8 @@ Admin routes accept Auth0 JWT bearer tokens and enforce role metadata. Local dev
 
 API-key routes accept either `Authorization: Bearer pops_...` or `x-api-key`. Incoming keys are SHA-256 hashed and matched against `api_keys.key_hash`; only active tenants, active clients, unrevoked keys, and unexpired keys authenticate.
 
+Set `AUTH_MODE=auth0`, `NUXT_PUBLIC_AUTH_MODE=auth0`, and the Auth0 domain, SPA client id, and API audience values to enable Universal Login in the dashboard. Add `http://localhost:3001` to the Auth0 application's allowed callback and logout URLs. Auth0 users are resolved against active tenant memberships by email; operations administrators retain cross-tenant access.
+
 Useful auth smoke endpoints:
 
 - `GET /v1/auth/admin/session`
@@ -94,9 +99,17 @@ Useful auth smoke endpoints:
 - `GET /health` returns API health.
 - `GET /docs` serves Swagger UI.
 - `POST /v1/tenants` creates a tenant and owner membership.
+- `PATCH /v1/tenants/:tenantId` updates a tenant name or lifecycle status.
+- `POST /v1/tenants/:tenantId/memberships` creates an invited or active membership.
+- `PATCH /v1/tenants/:tenantId/memberships/:membershipId` updates a member role or status.
 - `POST /v1/tenants/:tenantId/api-clients` creates an API client.
+- `PATCH /v1/tenants/:tenantId/api-clients/:clientId` enables or disables an API client.
 - `POST /v1/tenants/:tenantId/api-keys` mints an API key and returns the secret once.
+- `POST /v1/tenants/:tenantId/api-keys/:apiKeyId/rotate` atomically revokes and replaces a key.
+- `POST /v1/tenants/:tenantId/api-keys/:apiKeyId/revoke` revokes a key immediately.
 - `POST /v1/tenants/:tenantId/webhook-endpoints` registers an outbound webhook endpoint and returns the signing secret once.
+- `PATCH /v1/tenants/:tenantId/webhook-endpoints/:webhookId` updates or disables an endpoint.
+- `DELETE /v1/tenants/:tenantId/webhook-endpoints/:webhookId` soft-deletes an endpoint.
 - `GET /v1/tenants/:tenantId/summary` returns tenant dashboard data, recent payouts, ledger entries, outbox events, webhook deliveries, and audit logs.
 - `POST /v1/tenants/:tenantId/payouts` creates a payout with `x-api-key` and required `Idempotency-Key`.
 - `GET /v1/tenants/:tenantId/payouts` lists recent payouts for the API-key tenant.
@@ -107,6 +120,8 @@ Useful auth smoke endpoints:
 - `POST /v1/tenants/:tenantId/reconciliation/imports` imports and reconciles a provider settlement CSV.
 - `GET /v1/tenants/:tenantId/reconciliation/imports` lists recent settlement imports.
 - `GET /v1/tenants/:tenantId/reconciliation/imports/:importId` returns settlement rows and discrepancies.
+- `POST /v1/tenants/:tenantId/reconciliation/discrepancies/:discrepancyId/resolve` records an audited resolution.
+- `GET /v1/tenants/:tenantId/reconciliation/reports/settlements.csv` exports settlement results.
 - `GET /v1/demo/dashboard` returns the seeded Northstar Marketplaces dashboard.
 - `POST /v1/demo/seed` idempotently seeds the demo tenant.
 
@@ -187,7 +202,7 @@ Operations users can upload provider settlement CSVs with these columns:
 provider_payout_id,amount_minor,currency,status,settled_at
 ```
 
-Each import is hashed to prevent duplicate processing and reconciled transactionally against tenant payouts by provider payout id. Rows are classified as `matched`, `missing`, or `amount_mismatch`; non-matches create open discrepancy records. Completion writes an audit entry and a `reconciliation.completed.v1` outbox event.
+Each import is hashed to prevent duplicate processing and reconciled transactionally against tenant payouts by provider payout id. Rows are classified as `matched`, `missing`, or `amount_mismatch`; non-matches create open discrepancy records. Completion writes an audit entry and a `reconciliation.completed.v1` outbox event. Discrepancy resolution is idempotent and emits its own audit record and outbox event. Mutable tenant, client, webhook, payout, approval, and discrepancy tables use SQL Server system-versioned temporal history.
 
 The dashboard includes a sample CSV generator, import history, row-level results, and discrepancy details.
 
@@ -227,3 +242,9 @@ The test creates a separate Compose project with fresh volumes and a randomly pu
 3. Payout core and ledger
 4. Risk, approval, async orchestration, and webhook hardening
 5. Reconciliation, observability, and AWS staging
+
+## Operations Guides
+
+- `docs/auth0-setup.md` configures Universal Login, RBAC roles, and tenant membership mapping.
+- `docs/runbooks/staging-operations.md` covers alarms, rollback, async recovery, database migrations, and reconciliation response.
+- `.github/workflows/deploy-staging.yml` provides the OIDC-authenticated manual staging plan/apply path.

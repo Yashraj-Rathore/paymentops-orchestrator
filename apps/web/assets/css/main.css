@@ -70,6 +70,44 @@ textarea:focus-visible {
   min-height: 100vh;
 }
 
+.auth-gate {
+  align-content: center;
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+  min-height: 100vh;
+  padding: 28px;
+  text-align: center;
+}
+
+.auth-gate > div:not(.brand-symbol) {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.auth-gate p,
+.auth-gate h1,
+.auth-gate span {
+  margin: 0;
+}
+
+.auth-gate p {
+  color: var(--action);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.auth-gate h1 {
+  font-size: 1.5rem;
+}
+
+.auth-gate span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .app-sidebar {
   background: var(--sidebar);
   border-right: 1px solid #101317;
@@ -1088,6 +1126,18 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.resource-row > .resource-actions {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.resource-actions .icon-button {
+  height: 30px;
+  width: 30px;
+}
+
 .resource-row strong,
 .resource-row span,
 .resource-row small {
@@ -1249,7 +1299,7 @@ textarea:focus-visible {
   border-bottom: 1px solid #edf0f2;
   display: grid;
   gap: 12px;
-  grid-template-columns: 34px minmax(140px, 1fr) minmax(100px, 0.7fr) minmax(100px, 0.7fr) auto;
+  grid-template-columns: 34px minmax(140px, 1fr) minmax(100px, 0.7fr) minmax(100px, 0.7fr) auto auto;
   padding: 11px 14px;
 }
 
@@ -1269,6 +1319,25 @@ textarea:focus-visible {
 
 .exception-row strong {
   font-size: 0.72rem;
+}
+
+.exception-actions {
+  align-items: flex-end;
+  display: flex !important;
+  gap: 7px !important;
+}
+
+.resolution-form {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-column: 2 / -1;
+  grid-template-columns: minmax(180px, 1fr) 34px auto;
+  width: 100%;
+}
+
+.resolution-form input {
+  min-width: 0;
 }
 
 .segmented-control {
@@ -1916,6 +1985,20 @@ textarea:focus-visible {
   .exception-row > div:nth-child(3),
   .exception-row > div:nth-child(4) {
     grid-column: 2;
+  }
+
+  .exception-actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .resolution-form {
+    grid-column: 2 / -1;
+    grid-template-columns: minmax(0, 1fr) 34px;
+  }
+
+  .resolution-form .primary-button {
+    grid-column: 1 / -1;
   }
 
   .audit-row {

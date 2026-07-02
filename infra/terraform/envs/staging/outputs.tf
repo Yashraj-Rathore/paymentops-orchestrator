@@ -9,8 +9,18 @@ output "ecr_repository_url" {
 }
 
 output "public_url" {
-  value       = "http://${aws_lb.application.dns_name}"
-  description = "Public staging URL. Add HTTPS and a custom domain before production use."
+  value       = local.public_url
+  description = "Public staging URL backed by the ALB or configured Route 53 domain."
+}
+
+output "operations_alarm_topic_arn" {
+  value       = aws_sns_topic.operations.arn
+  description = "SNS topic receiving PaymentOps staging alarms."
+}
+
+output "cloudwatch_dashboard_name" {
+  value       = aws_cloudwatch_dashboard.operations.dashboard_name
+  description = "CloudWatch operations dashboard name."
 }
 
 output "ecs_cluster_name" {

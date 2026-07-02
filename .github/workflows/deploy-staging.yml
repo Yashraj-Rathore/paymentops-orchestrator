@@ -1,0 +1,84 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable image tag, normally the Git SHA
+        required: true
+        default: ""
+      apply:
+        description: Apply the reviewed Terraform plan
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: paymentops-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ca-central-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.7
+
+      - name: Initialize Terraform
+        working-directory: infra/terraform/envs/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.AWS_TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.AWS_TF_STATE_KEY }}" \
+            -backend-config="region=ca-central-1"
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push immutable image
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          REPOSITORY="$(terraform -chdir=infra/terraform/envs/staging output -raw ecr_repository_url)"
+          docker build --tag "$REPOSITORY:$IMAGE_TAG" .
+          docker push "$REPOSITORY:$IMAGE_TAG"
+
+      - name: Terraform plan
+        working-directory: infra/terraform/envs/staging
+        env:
+          TF_VAR_database_url_secret_arn: ${{ secrets.DATABASE_URL_SECRET_ARN }}
+          TF_VAR_auth0_domain: ${{ vars.AUTH0_DOMAIN }}
+          TF_VAR_auth0_client_id: ${{ vars.AUTH0_CLIENT_ID }}
+          TF_VAR_auth0_audience: ${{ vars.AUTH0_AUDIENCE }}
+          TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+          TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+          TF_VAR_certificate_arn: ${{ vars.ACM_CERTIFICATE_ARN }}
+          TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+        run: |
+          terraform plan \
+            -var="deploy_services=true" \
+            -var="enable_https=true" \
+            -var="image_tag=${{ inputs.image_tag }}" \
+            -out=staging.tfplan
+
+      - name: Apply Terraform
+        if: inputs.apply
+        working-directory: infra/terraform/envs/staging
+        run: terraform apply -auto-approve staging.tfplan

@@ -60,6 +60,8 @@ interface DiscrepancyRow {
   actual_amount_minor: number | string;
   expected_currency: string | null;
   actual_currency: string;
+  resolution_note: string | null;
+  resolved_by_actor_id: string | null;
   created_at: Date;
   resolved_at: Date | null;
 }
@@ -81,6 +83,50 @@ export interface CreateSettlementImportInput {
   actorType: AuthPrincipalType;
   actorId: string;
   rows: SettlementImportRowInput[];
+}
+
+export interface ResolveDiscrepancyInput {
+  tenantExternalId: string;
+  discrepancyExternalId: string;
+  resolutionNote: string;
+  actorType: AuthPrincipalType;
+  actorId: string;
+}
+
+export interface SettlementReportRow {
+  importId: string;
+  providerName: string;
+  fileName: string;
+  providerPayoutId: string;
+  payoutId: string | null;
+  amountMinor: number;
+  currency: string;
+  providerStatus: string;
+  settledAt: string | null;
+  matchStatus: SettlementMatchStatus;
+  discrepancyType: ReconciliationDiscrepancySummary["type"] | null;
+  discrepancyStatus: ReconciliationDiscrepancySummary["status"] | null;
+  resolutionNote: string | null;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+}
+
+interface SettlementReportRecord {
+  import_external_id: string;
+  provider_name: string;
+  file_name: string;
+  provider_payout_id: string;
+  payout_external_id: string | null;
+  amount_minor: number | string;
+  currency: string;
+  provider_status: string;
+  settled_at: Date | null;
+  match_status: SettlementMatchStatus;
+  discrepancy_type: ReconciliationDiscrepancySummary["type"] | null;
+  discrepancy_status: ReconciliationDiscrepancySummary["status"] | null;
+  resolution_note: string | null;
+  resolved_by_actor_id: string | null;
+  resolved_at: Date | null;
 }
 
 @Injectable()
@@ -174,6 +220,8 @@ SELECT
   reconciliation_discrepancies.actual_amount_minor,
   reconciliation_discrepancies.expected_currency,
   reconciliation_discrepancies.actual_currency,
+  reconciliation_discrepancies.resolution_note,
+  reconciliation_discrepancies.resolved_by_actor_id,
   reconciliation_discrepancies.created_at,
   reconciliation_discrepancies.resolved_at
 FROM dbo.reconciliation_discrepancies
@@ -188,6 +236,157 @@ ORDER BY reconciliation_discrepancies.created_at ASC;
       rows: rows.recordset.map(mapSettlementRow),
       discrepancies: discrepancies.recordset.map(mapDiscrepancy)
     };
+  }
+
+  async resolveDiscrepancy(
+    input: ResolveDiscrepancyInput
+  ): Promise<ReconciliationDiscrepancySummary> {
+    const tenant = await this.requireTenant(input.tenantExternalId);
+    const pool = await this.database.connect();
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+    try {
+      const current = await new sql.Request(transaction)
+        .input("tenantId", sql.UniqueIdentifier, tenant.id)
+        .input("discrepancyExternalId", sql.NVarChar(64), input.discrepancyExternalId).query<{
+        status: ReconciliationDiscrepancySummary["status"];
+      }>(`
+SELECT status
+FROM dbo.reconciliation_discrepancies WITH (UPDLOCK, HOLDLOCK)
+WHERE tenant_id = @tenantId
+  AND external_id = @discrepancyExternalId;
+`);
+      const discrepancy = current.recordset[0];
+
+      if (!discrepancy) {
+        throw new NotFoundException(
+          "Reconciliation discrepancy " + input.discrepancyExternalId + " was not found"
+        );
+      }
+
+      if (discrepancy.status === "open") {
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, tenant.id)
+          .input("discrepancyExternalId", sql.NVarChar(64), input.discrepancyExternalId)
+          .input("resolutionNote", sql.NVarChar(1000), input.resolutionNote)
+          .input("actorId", sql.NVarChar(256), input.actorId).query(`
+UPDATE dbo.reconciliation_discrepancies
+SET status = N'resolved',
+    resolution_note = @resolutionNote,
+    resolved_by_actor_id = @actorId,
+    resolved_at = SYSUTCDATETIME()
+WHERE tenant_id = @tenantId
+  AND external_id = @discrepancyExternalId;
+`);
+
+        const eventPayload = {
+          discrepancyId: input.discrepancyExternalId,
+          tenantId: tenant.external_id,
+          resolutionNote: input.resolutionNote,
+          resolvedBy: input.actorId
+        };
+
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, tenant.id)
+          .input("eventType", sql.NVarChar(128), "reconciliation.discrepancy_resolved.v1")
+          .input("aggregateType", sql.NVarChar(64), "reconciliation_discrepancy")
+          .input("aggregateId", sql.NVarChar(64), input.discrepancyExternalId)
+          .input("payloadJson", sql.NVarChar(sql.MAX), JSON.stringify(eventPayload)).query(`
+INSERT INTO dbo.outbox_events (
+  tenant_id,
+  event_type,
+  aggregate_type,
+  aggregate_id,
+  payload_json
+)
+VALUES (@tenantId, @eventType, @aggregateType, @aggregateId, @payloadJson);
+`);
+
+        await new sql.Request(transaction)
+          .input("tenantId", sql.UniqueIdentifier, tenant.id)
+          .input("actorType", sql.NVarChar(64), input.actorType)
+          .input("actorId", sql.NVarChar(256), input.actorId)
+          .input("resourceId", sql.NVarChar(128), input.discrepancyExternalId)
+          .input("metadataJson", sql.NVarChar(sql.MAX), JSON.stringify(eventPayload)).query(`
+INSERT INTO dbo.audit_logs (
+  tenant_id,
+  actor_type,
+  actor_id,
+  action,
+  resource_type,
+  resource_id,
+  metadata_json
+)
+VALUES (
+  @tenantId,
+  @actorType,
+  @actorId,
+  N'reconciliation.discrepancy_resolved',
+  N'reconciliation_discrepancy',
+  @resourceId,
+  @metadataJson
+);
+`);
+      }
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+
+    return this.getDiscrepancy(input.tenantExternalId, input.discrepancyExternalId);
+  }
+
+  async getSettlementReportRows(tenantExternalId: string): Promise<SettlementReportRow[]> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    const pool = await this.database.connect();
+    const result = await pool.request().input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .query<SettlementReportRecord>(`
+SELECT
+  settlement_imports.external_id AS import_external_id,
+  settlement_imports.provider_name,
+  settlement_imports.file_name,
+  settlement_rows.provider_payout_id,
+  payouts.external_id AS payout_external_id,
+  settlement_rows.amount_minor,
+  settlement_rows.currency,
+  settlement_rows.provider_status,
+  settlement_rows.settled_at,
+  settlement_rows.match_status,
+  reconciliation_discrepancies.discrepancy_type,
+  reconciliation_discrepancies.status AS discrepancy_status,
+  reconciliation_discrepancies.resolution_note,
+  reconciliation_discrepancies.resolved_by_actor_id,
+  reconciliation_discrepancies.resolved_at
+FROM dbo.settlement_rows
+INNER JOIN dbo.settlement_imports
+  ON settlement_imports.id = settlement_rows.settlement_import_id
+LEFT JOIN dbo.payouts ON payouts.id = settlement_rows.payout_id
+LEFT JOIN dbo.reconciliation_discrepancies
+  ON reconciliation_discrepancies.settlement_row_id = settlement_rows.id
+WHERE settlement_rows.tenant_id = @tenantId
+ORDER BY settlement_imports.created_at DESC, settlement_rows.created_at ASC;
+`);
+
+    return result.recordset.map((row) => ({
+      importId: row.import_external_id,
+      providerName: row.provider_name,
+      fileName: row.file_name,
+      providerPayoutId: row.provider_payout_id,
+      payoutId: row.payout_external_id,
+      amountMinor: Number(row.amount_minor),
+      currency: row.currency.trim(),
+      providerStatus: row.provider_status,
+      settledAt: row.settled_at?.toISOString() ?? null,
+      matchStatus: row.match_status,
+      discrepancyType: row.discrepancy_type,
+      discrepancyStatus: row.discrepancy_status,
+      resolutionNote: row.resolution_note,
+      resolvedBy: row.resolved_by_actor_id,
+      resolvedAt: row.resolved_at?.toISOString() ?? null
+    }));
   }
 
   async createImport(input: CreateSettlementImportInput): Promise<ReconciliationImportDetails> {
@@ -416,6 +615,50 @@ VALUES (
     return this.getImport(input.tenantExternalId, input.externalId);
   }
 
+  private async getDiscrepancy(
+    tenantExternalId: string,
+    discrepancyExternalId: string
+  ): Promise<ReconciliationDiscrepancySummary> {
+    const tenant = await this.requireTenant(tenantExternalId);
+    const pool = await this.database.connect();
+    const result = await pool
+      .request()
+      .input("tenantId", sql.UniqueIdentifier, tenant.id)
+      .input("discrepancyExternalId", sql.NVarChar(64), discrepancyExternalId)
+      .query<DiscrepancyRow>(`
+SELECT
+  reconciliation_discrepancies.external_id,
+  CONVERT(NVARCHAR(36), reconciliation_discrepancies.settlement_row_id) AS settlement_row_id,
+  settlement_rows.provider_payout_id,
+  payouts.external_id AS payout_external_id,
+  reconciliation_discrepancies.discrepancy_type,
+  reconciliation_discrepancies.status,
+  reconciliation_discrepancies.expected_amount_minor,
+  reconciliation_discrepancies.actual_amount_minor,
+  reconciliation_discrepancies.expected_currency,
+  reconciliation_discrepancies.actual_currency,
+  reconciliation_discrepancies.resolution_note,
+  reconciliation_discrepancies.resolved_by_actor_id,
+  reconciliation_discrepancies.created_at,
+  reconciliation_discrepancies.resolved_at
+FROM dbo.reconciliation_discrepancies
+INNER JOIN dbo.settlement_rows
+  ON settlement_rows.id = reconciliation_discrepancies.settlement_row_id
+LEFT JOIN dbo.payouts ON payouts.id = reconciliation_discrepancies.payout_id
+WHERE reconciliation_discrepancies.tenant_id = @tenantId
+  AND reconciliation_discrepancies.external_id = @discrepancyExternalId;
+`);
+    const discrepancy = result.recordset[0];
+
+    if (!discrepancy) {
+      throw new NotFoundException(
+        "Reconciliation discrepancy " + discrepancyExternalId + " was not found"
+      );
+    }
+
+    return mapDiscrepancy(discrepancy);
+  }
+
   private async requireTenant(externalId: string): Promise<TenantRow> {
     const pool = await this.database.connect();
     const result = await pool.request().input("externalId", sql.NVarChar(64), externalId)
@@ -492,6 +735,8 @@ function mapDiscrepancy(row: DiscrepancyRow): ReconciliationDiscrepancySummary {
     actualAmountMinor: Number(row.actual_amount_minor),
     expectedCurrency: row.expected_currency?.trim() ?? null,
     actualCurrency: row.actual_currency.trim(),
+    resolutionNote: row.resolution_note,
+    resolvedBy: row.resolved_by_actor_id,
     createdAt: row.created_at.toISOString(),
     resolvedAt: row.resolved_at?.toISOString() ?? null
   };

@@ -11,6 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@auth0/auth0-spa-js": "^2.22.0",
     "@lucide/vue": "^1.22.0",
     "@paymentops/contracts": "workspace:*",
     "@paymentops/ui": "workspace:*",
