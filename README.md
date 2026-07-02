@@ -4,6 +4,18 @@ PaymentOps Orchestrator is a payment operations platform simulator. It is design
 
 The current milestone is a foundation, persistence, identity, payout-core, risk-approval, webhook-delivery, reconciliation, and observability baseline: a strict TypeScript `pnpm` monorepo with Nuxt, NestJS, shared packages, Docker Compose services, CI, SQL Server migrations, tenant/client/key/webhook/risk tables, RBAC-protected admin routes, API-key authentication, Auth0 JWT validation, idempotent payout creation, ledger entries, approval gating, outbox events, Redpanda publication, BullMQ/Redis job processing, provider simulator callbacks, signed merchant webhook delivery, replay, provider settlement CSV reconciliation, discrepancy tracking, OpenTelemetry traces and metrics, correlated structured logs, a usable dashboard shell, and a no-apply AWS ECS/Fargate staging baseline.
 
+## Product Demo
+
+The seeded operations workspace provides a responsive dashboard for payout monitoring, approvals, integration access, webhook delivery, settlement reconciliation, and audit history.
+
+![PaymentOps operations overview](docs/images/dashboard-overview.png)
+
+| Create a payout | Responsive navigation |
+| --- | --- |
+| ![Create payout workflow](docs/images/create-payout.png) | ![PaymentOps mobile dashboard](docs/images/dashboard-mobile.png) |
+
+Regenerate these screenshots from a running local stack with `pnpm capture:readme`.
+
 ## Workspace
 
 ```text
@@ -76,6 +88,7 @@ pnpm test:e2e     Run the isolated Docker payout orchestration test
 pnpm test:contract Generate and verify the worker/provider Pact
 pnpm test:ui      Run Playwright tests against the running stack
 pnpm test:load    Run the k6 payout smoke profile against the running API
+pnpm capture:readme Capture the current dashboard screenshots used in this README
 pnpm db:migrate   Build shared packages and apply SQL Server migrations
 pnpm docker:up    Start the Docker Compose stack
 pnpm docker:down  Stop the Docker Compose stack

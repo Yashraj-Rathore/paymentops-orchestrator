@@ -24,6 +24,7 @@
     "test:contract": "vitest run --config tests/contracts/vitest.config.ts",
     "test:ui": "playwright test --config tests/playwright/playwright.config.ts",
     "test:load": "k6 run tests/load/payout-smoke.js",
+    "capture:readme": "tsx scripts/capture-readme.ts",
     "typecheck:quality": "tsc -p tests/contracts/tsconfig.json --noEmit && tsc -p tests/playwright/tsconfig.json --noEmit"
   },
   "devDependencies": {
