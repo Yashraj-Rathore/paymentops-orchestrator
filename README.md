@@ -10,8 +10,8 @@ The seeded operations workspace provides a responsive dashboard for payout monit
 
 ![PaymentOps operations overview](docs/images/dashboard-overview.png)
 
-| Create a payout | Responsive navigation |
-| --- | --- |
+| Create a payout                                          | Responsive navigation                                            |
+| -------------------------------------------------------- | ---------------------------------------------------------------- |
 | ![Create payout workflow](docs/images/create-payout.png) | ![PaymentOps mobile dashboard](docs/images/dashboard-mobile.png) |
 
 Regenerate these screenshots from a running local stack with `pnpm capture:readme`.
@@ -88,6 +88,10 @@ pnpm test:e2e     Run the isolated Docker payout orchestration test
 pnpm test:contract Generate and verify the worker/provider Pact
 pnpm test:ui      Run Playwright tests against the running stack
 pnpm test:load    Run the k6 payout smoke profile against the running API
+pnpm test:load:soak Run the sustained k6 payout profile against an existing environment
+pnpm test:smoke:staging Verify HTTPS, health, docs, security headers, and optional Auth0 session
+pnpm auth0:verify Validate production Auth0 identifiers and OIDC discovery
+pnpm security:audit Fail on high or critical production dependency findings
 pnpm capture:readme Capture the current dashboard screenshots used in this README
 pnpm db:migrate   Build shared packages and apply SQL Server migrations
 pnpm docker:up    Start the Docker Compose stack
@@ -261,3 +265,6 @@ The test creates a separate Compose project with fresh volumes and a randomly pu
 - `docs/auth0-setup.md` configures Universal Login, RBAC roles, and tenant membership mapping.
 - `docs/runbooks/staging-operations.md` covers alarms, rollback, async recovery, database migrations, and reconciliation response.
 - `.github/workflows/deploy-staging.yml` provides the OIDC-authenticated manual staging plan/apply path.
+- `.github/workflows/performance.yml` runs an approval-gated payout soak profile against staging.
+
+Production startup rejects development authentication, placeholder Auth0 identifiers, insecure SQL Server connections, and wildcard or local CORS origins. The staging deployment also rejects mutable image tags and runs Auth0 discovery plus public smoke checks after apply.

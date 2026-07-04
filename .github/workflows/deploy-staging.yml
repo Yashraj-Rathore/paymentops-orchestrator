@@ -41,6 +41,22 @@ jobs:
         with:
           terraform_version: 1.15.7
 
+      - name: Validate immutable image tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^[0-9a-f]{7,40}$ ]]; then
+            echo "image_tag must be a 7-40 character Git SHA" >&2
+            exit 1
+          fi
+
+      - name: Verify Auth0 discovery
+        env:
+          AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID: ${{ vars.AUTH0_CLIENT_ID }}
+          AUTH0_AUDIENCE: ${{ vars.AUTH0_AUDIENCE }}
+        run: node scripts/verify-auth0.mjs
+
       - name: Initialize Terraform
         working-directory: infra/terraform/envs/staging
         run: |
@@ -82,3 +98,15 @@ jobs:
         if: inputs.apply
         working-directory: infra/terraform/envs/staging
         run: terraform apply -auto-approve staging.tfplan
+
+      - name: Read staging URL
+        if: inputs.apply
+        id: staging
+        working-directory: infra/terraform/envs/staging
+        run: echo "public_url=$(terraform output -raw public_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Run staging smoke checks
+        if: inputs.apply
+        env:
+          PAYMENTOPS_STAGING_URL: ${{ steps.staging.outputs.public_url }}
+        run: node scripts/staging-smoke.mjs

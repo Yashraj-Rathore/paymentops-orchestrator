@@ -1,0 +1,52 @@
+name: Staging performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: Concurrent payout submitters
+        required: true
+        default: "10"
+      duration:
+        description: Soak duration, for example 10m or 30m
+        required: true
+        default: "10m"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paymentops-staging-performance
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify staging health
+        env:
+          PAYMENTOPS_STAGING_URL: ${{ vars.STAGING_URL }}
+        run: node scripts/staging-smoke.mjs
+
+      - name: Run payout soak profile
+        env:
+          PAYMENTOPS_API_URL: ${{ vars.STAGING_URL }}
+          PAYMENTOPS_TENANT_ID: ${{ vars.PERFORMANCE_TENANT_ID }}
+          PAYMENTOPS_API_KEY: ${{ secrets.PERFORMANCE_API_KEY }}
+          K6_VUS: ${{ inputs.vus }}
+          K6_DURATION: ${{ inputs.duration }}
+        run: |
+          docker run --rm --network host \
+            -e PAYMENTOPS_API_URL \
+            -e PAYMENTOPS_TENANT_ID \
+            -e PAYMENTOPS_API_KEY \
+            -e K6_VUS \
+            -e K6_DURATION \
+            -v "$PWD:/work" -w /work \
+            grafana/k6:latest run tests/load/payout-soak.js

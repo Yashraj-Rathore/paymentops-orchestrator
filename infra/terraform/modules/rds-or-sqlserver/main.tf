@@ -15,6 +15,10 @@ resource "random_password" "master" {
   override_special = "!#$%&*+-=?_"
 }
 
+resource "random_id" "final_snapshot" {
+  byte_length = 4
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = var.name
   subnet_ids = var.subnet_ids
@@ -37,20 +41,23 @@ resource "aws_db_instance" "this" {
   vpc_security_group_ids       = var.security_group_ids
   publicly_accessible          = false
   multi_az                     = false
-  backup_retention_period      = 1
+  backup_retention_period      = var.backup_retention_period
+  backup_window                = "03:00-04:00"
+  maintenance_window           = "sun:04:00-sun:05:00"
   copy_tags_to_snapshot        = true
   deletion_protection          = var.deletion_protection
-  skip_final_snapshot          = true
+  skip_final_snapshot          = var.skip_final_snapshot
+  final_snapshot_identifier    = var.skip_final_snapshot ? null : "${var.name}-final-${random_id.final_snapshot.hex}"
   auto_minor_version_upgrade   = true
   performance_insights_enabled = false
-  apply_immediately            = true
+  apply_immediately            = false
 
   tags = var.tags
 }
 
 resource "aws_secretsmanager_secret" "database_url" {
-  name                    = "${var.name}/database-url"
-  recovery_window_in_days = 0
+  name_prefix             = "${var.name}/database-url-"
+  recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags
 }
 

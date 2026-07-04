@@ -288,8 +288,11 @@ module "sql_server" {
   count  = var.create_database ? 1 : 0
   source = "../../modules/rds-or-sqlserver"
 
-  name               = local.name
-  subnet_ids         = module.network.private_subnet_ids
-  security_group_ids = [aws_security_group.database.id]
-  tags               = local.common_tags
+  name                    = local.name
+  subnet_ids              = module.network.private_subnet_ids
+  security_group_ids      = [aws_security_group.database.id]
+  backup_retention_period = var.database_backup_retention_days
+  deletion_protection     = var.database_deletion_protection
+  skip_final_snapshot     = var.database_skip_final_snapshot
+  tags                    = local.common_tags
 }

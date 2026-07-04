@@ -45,8 +45,31 @@ variable "database_name" {
 
 variable "deletion_protection" {
   type        = bool
-  description = "Protect the staging database from accidental deletion."
+  description = "Protect the database from accidental deletion."
+  default     = true
+}
+
+variable "backup_retention_period" {
+  type        = number
+  description = "Number of days that automated SQL Server backups are retained."
+  default     = 7
+
+  validation {
+    condition     = var.backup_retention_period >= 1 && var.backup_retention_period <= 35
+    error_message = "backup_retention_period must be between 1 and 35 days."
+  }
+}
+
+variable "skip_final_snapshot" {
+  type        = bool
+  description = "Skip the final SQL Server snapshot when destroying the instance."
   default     = false
+}
+
+variable "secret_recovery_window_in_days" {
+  type        = number
+  description = "Secrets Manager recovery window for the generated database URL."
+  default     = 7
 }
 
 variable "tags" {

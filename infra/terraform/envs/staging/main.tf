@@ -43,5 +43,23 @@ resource "terraform_data" "deployment_guard" {
       condition     = var.domain_name == "" || var.route53_zone_id != ""
       error_message = "route53_zone_id is required when domain_name is set."
     }
+
+    precondition {
+      condition = !var.deploy_services || (
+        var.auth0_client_id != "" &&
+        !strcontains(var.auth0_domain, "paymentops-dev") &&
+        !strcontains(var.auth0_domain, "your-tenant") &&
+        !strcontains(var.auth0_audience, "paymentops.local")
+      )
+      error_message = "Service deployment requires real Auth0 domain, client ID, and API audience values."
+    }
+
+    precondition {
+      condition = !var.deploy_services || (
+        var.container_image != "" ||
+        (trimspace(var.image_tag) != "" && var.image_tag != "latest")
+      )
+      error_message = "Service deployment requires an immutable image tag or explicit container_image."
+    }
   }
 }

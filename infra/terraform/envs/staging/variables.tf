@@ -52,6 +52,24 @@ variable "database_url_secret_arn" {
   default     = ""
 }
 
+variable "database_backup_retention_days" {
+  type        = number
+  description = "Automated backup retention for managed staging SQL Server."
+  default     = 7
+}
+
+variable "database_deletion_protection" {
+  type        = bool
+  description = "Prevent accidental deletion of managed staging SQL Server."
+  default     = true
+}
+
+variable "database_skip_final_snapshot" {
+  type        = bool
+  description = "Skip the final snapshot during database destruction. Keep false for recovery safety."
+  default     = false
+}
+
 variable "auth0_domain" {
   type        = string
   description = "Auth0 issuer domain used by the API."

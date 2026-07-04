@@ -43,3 +43,16 @@ NUXT_PUBLIC_AUTH0_AUDIENCE=https://api.paymentops.example
 The user email in Auth0 must match an active `user_memberships` record. Operations administrators can access every tenant; merchant owners and developers are constrained to their active tenant memberships.
 
 Never commit Auth0 secrets or machine credentials. The SPA client ID and API audience are public identifiers; confidential client secrets do not belong in the Nuxt application.
+
+## Verification
+
+Validate the public identifiers and OpenID Connect discovery document before deployment:
+
+```powershell
+$env:AUTH0_DOMAIN = "your-tenant.us.auth0.com"
+$env:AUTH0_CLIENT_ID = "your_spa_client_id"
+$env:AUTH0_AUDIENCE = "https://api.paymentops.example"
+pnpm auth0:verify
+```
+
+The command verifies the issuer, authorization endpoint, token endpoint, and JWKS endpoint. Auth0 does not expose SPA callback settings through public discovery, so confirm the callback, logout, and web-origin entries in the Auth0 dashboard and complete one interactive tenant-scoped login before approving staging.

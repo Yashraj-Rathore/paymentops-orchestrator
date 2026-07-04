@@ -16,6 +16,19 @@ test("operator can navigate the seeded operations dashboard", async ({ page }, t
   await expect(page.getByRole("heading", { name: "Reconciliation", level: 1 })).toBeVisible();
 });
 
+test("public responses include baseline security headers", async ({ page, request }, testInfo) => {
+  test.skip(testInfo.project.name.startsWith("mobile"), "Header check only needs one browser");
+
+  const dashboard = await page.goto("/");
+  expect(dashboard).not.toBeNull();
+  expect(dashboard?.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(dashboard?.headers()["x-frame-options"]).toBe("DENY");
+
+  const health = await request.get("http://127.0.0.1:3000/health");
+  expect(health.ok()).toBe(true);
+  expect(health.headers()["x-content-type-options"]).toBe("nosniff");
+});
+
 test("mobile navigation remains usable", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith("mobile"), "Mobile-only navigation check");
 

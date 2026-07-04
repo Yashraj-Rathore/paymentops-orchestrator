@@ -3,6 +3,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import type { PaymentOpsConfig } from "@paymentops/config";
 import { createLogger } from "@paymentops/logger";
 import { createHttpObservabilityMiddleware } from "@paymentops/observability";
+import helmet from "helmet";
 
 import { AppModule } from "./app.module.js";
 import { DatabaseInitializer } from "./database/database.initializer.js";
@@ -17,11 +18,24 @@ export async function bootstrapApi(config: PaymentOpsConfig): Promise<void> {
     bufferLogs: true
   });
 
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      strictTransportSecurity:
+        config.nodeEnv === "production"
+          ? { maxAge: 31_536_000, includeSubDomains: true, preload: true }
+          : false
+    })
+  );
   app.use(createHttpObservabilityMiddleware(config.serviceName));
   await app.get(DatabaseInitializer).initialize();
   await app.get(OperationsService).seedDemo();
 
-  app.enableCors({ exposedHeaders: ["x-correlation-id"] });
+  app.enableCors({
+    origin: config.corsOrigins,
+    exposedHeaders: ["x-correlation-id"]
+  });
   app.setGlobalPrefix("v1", {
     exclude: ["health", "docs", "docs-json"]
   });

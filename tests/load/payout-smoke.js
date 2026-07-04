@@ -5,10 +5,13 @@ import exec from "k6/execution";
 
 const apiBaseUrl = __ENV.PAYMENTOPS_API_URL || "http://127.0.0.1:3000";
 const adminToken = __ENV.PAYMENTOPS_DEV_ADMIN_TOKEN || "dev-admin-token";
+const adminBearerToken = __ENV.PAYMENTOPS_ADMIN_BEARER_TOKEN;
 const adminHeaders = {
   headers: {
     "content-type": "application/json",
-    "x-paymentops-dev-admin-token": adminToken
+    ...(adminBearerToken
+      ? { authorization: "Bearer " + adminBearerToken }
+      : { "x-paymentops-dev-admin-token": adminToken })
   }
 };
 
@@ -28,6 +31,16 @@ export const options = {
 };
 
 export function setup() {
+  const existingTenantId = __ENV.PAYMENTOPS_TENANT_ID;
+  const existingApiKey = __ENV.PAYMENTOPS_API_KEY;
+
+  if (existingTenantId || existingApiKey) {
+    if (!existingTenantId || !existingApiKey) {
+      fail("PAYMENTOPS_TENANT_ID and PAYMENTOPS_API_KEY must be supplied together");
+    }
+    return { tenantId: existingTenantId, apiKey: existingApiKey };
+  }
+
   const suffix = String(Date.now());
   const tenant = requestJson(
     "POST",

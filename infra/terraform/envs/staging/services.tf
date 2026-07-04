@@ -119,6 +119,7 @@ module "api" {
     AUTH0_DOMAIN                = var.auth0_domain
     AUTH0_AUDIENCE              = var.auth0_audience
     AUTH0_ROLE_CLAIM            = var.auth0_role_claim
+    CORS_ORIGINS                = local.public_url
     OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector:4318"
     PROVIDER_SIMULATOR_URL      = "http://provider-simulator:3003"
     PAYMENTOPS_API_INTERNAL_URL = "http://api:3000"

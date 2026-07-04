@@ -5,6 +5,12 @@ deploy_services = false
 create_database = false
 use_fargate_spot = true
 
+# Managed SQL Server recovery controls. Set deletion_protection=false only
+# during an intentional teardown after confirming a final snapshot.
+database_backup_retention_days = 7
+database_deletion_protection   = true
+database_skip_final_snapshot   = false
+
 # Set these to the real Auth0 API settings before enabling services.
 auth0_domain   = "your-tenant.us.auth0.com"
 auth0_audience = "https://api.paymentops.example"

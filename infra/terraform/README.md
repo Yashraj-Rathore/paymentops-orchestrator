@@ -10,6 +10,7 @@ Terraform provisions a no-apply staging baseline for PaymentOps Orchestrator in 
 - Secrets Manager injection of `DATABASE_URL`
 - Optional ACM certificate creation, Route 53 aliasing, HTTPS redirect, and AWS managed WAF rules
 - SNS-backed alarms for ALB 5xx responses, unhealthy targets, and structured API errors
+- SQL Server automated backup retention, deletion protection, final snapshots, and recoverable database secrets
 
 The defaults are deliberately conservative: ECS services and SQL Server are disabled, while Fargate Spot is selected for staging. Redis and Redpanda run as single-node ephemeral Fargate services for demonstration only; production must use durable managed equivalents. Applying this configuration creates billable AWS resources; review an AWS cost estimate first.
 
@@ -38,6 +39,10 @@ terraform plan
 5. Verify the Terraform `public_url`, API `/health`, and `/docs` endpoints. The API initializes the database and runs pending migrations during startup.
 
 Set `enable_https=true` with either `certificate_arn` or `create_certificate=true`, `domain_name`, and `route53_zone_id`. WAF managed rules are enabled by default. Subscribe `alert_email` and confirm the SNS email before relying on notifications. The manual `Deploy staging` workflow uses GitHub OIDC and an environment approval before Terraform apply.
+
+Managed SQL Server defaults to seven days of automated backups, deletion protection, a seven-day Secrets Manager recovery window, and a final snapshot on destroy. An intentional teardown therefore requires two reviewed changes: disable `database_deletion_protection`, then apply again with `database_skip_final_snapshot=false`.
+
+The deployment workflow requires an immutable Git SHA image tag, validates Auth0 discovery before planning, and runs `scripts/staging-smoke.mjs` after apply. Configure the `staging` GitHub environment with the variables and secrets listed in `docs/runbooks/staging-operations.md`.
 
 See `docs/runbooks/staging-operations.md` for incident response, rollback, queue recovery, migration handling, and reconciliation procedures.
 

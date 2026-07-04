@@ -17,7 +17,9 @@ const baseSchema = z.object({
   PROVIDER_SIMULATOR_PORT: z.coerce.number().int().positive().default(3003),
   DATABASE_URL: z
     .string()
-    .default("sqlserver://sa:YourStrong!Passw0rd@localhost:1433;database=paymentops;encrypt=false;trustServerCertificate=true"),
+    .default(
+      "sqlserver://sa:YourStrong!Passw0rd@localhost:1433;database=paymentops;encrypt=false;trustServerCertificate=true"
+    ),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   REDPANDA_BROKERS: z.string().default("localhost:9092"),
   AUTH_MODE: z.enum(["development", "auth0"]).default("development"),
@@ -25,6 +27,7 @@ const baseSchema = z.object({
   AUTH0_AUDIENCE: z.string().default("https://api.paymentops.local"),
   AUTH0_ROLE_CLAIM: z.string().default("https://paymentops.local/roles"),
   PAYMENTOPS_DEV_ADMIN_TOKEN: z.string().min(1).default("dev-admin-token"),
+  CORS_ORIGINS: z.string().default("http://localhost:3001,http://127.0.0.1:3001"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().default("http://localhost:4318"),
   PROVIDER_SIMULATOR_URL: z.string().url().default("http://localhost:3003"),
   PAYMENTOPS_API_INTERNAL_URL: z.string().url().default("http://localhost:3000")
@@ -47,6 +50,7 @@ export interface PaymentOpsConfig {
     domain: string;
     audience: string;
   };
+  corsOrigins: string[];
   otelExporterOtlpEndpoint: string;
   providerSimulatorUrl: string;
   apiInternalUrl: string;
@@ -57,6 +61,7 @@ export function loadConfig(
   env: NodeJS.ProcessEnv = process.env
 ): PaymentOpsConfig {
   const parsed = baseSchema.parse(env);
+  assertProductionConfig(serviceName, parsed);
 
   return {
     serviceName,
@@ -75,10 +80,61 @@ export function loadConfig(
       domain: parsed.AUTH0_DOMAIN,
       audience: parsed.AUTH0_AUDIENCE
     },
+    corsOrigins: parsed.CORS_ORIGINS.split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     otelExporterOtlpEndpoint: parsed.OTEL_EXPORTER_OTLP_ENDPOINT,
     providerSimulatorUrl: parsed.PROVIDER_SIMULATOR_URL,
     apiInternalUrl: parsed.PAYMENTOPS_API_INTERNAL_URL
   };
+}
+
+function assertProductionConfig(serviceName: ServiceName, env: z.infer<typeof baseSchema>): void {
+  if (env.NODE_ENV !== "production") {
+    return;
+  }
+
+  const errors: string[] = [];
+
+  if (serviceName === "api") {
+    if (env.AUTH_MODE !== "auth0") {
+      errors.push("AUTH_MODE must be auth0");
+    }
+    if (env.AUTH0_DOMAIN.includes("paymentops-dev") || env.AUTH0_DOMAIN.includes("your-tenant")) {
+      errors.push("AUTH0_DOMAIN must identify a real tenant");
+    }
+    if (env.AUTH0_AUDIENCE.includes("paymentops.local")) {
+      errors.push("AUTH0_AUDIENCE must use the deployed API identifier");
+    }
+
+    const origins = env.CORS_ORIGINS.split(",").map((origin) => origin.trim());
+    if (
+      origins.length === 0 ||
+      origins.some(
+        (origin) =>
+          origin === "*" ||
+          origin.includes("localhost") ||
+          origin.includes("127.0.0.1") ||
+          !origin.startsWith("https://")
+      )
+    ) {
+      errors.push("CORS_ORIGINS must contain only explicit HTTPS origins");
+    }
+  }
+
+  if (serviceName === "api" || serviceName === "worker") {
+    const databaseUrl = env.DATABASE_URL.toLowerCase();
+    if (
+      !databaseUrl.includes("encrypt=true") ||
+      !databaseUrl.includes("trustservercertificate=false")
+    ) {
+      errors.push("DATABASE_URL must enable encryption and certificate verification");
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid production configuration: ${errors.join("; ")}`);
+  }
 }
 
 function portForService(serviceName: ServiceName, env: z.infer<typeof baseSchema>): number {
