@@ -20,6 +20,10 @@ const devAdminToken = process.env.PAYMENTOPS_DEV_ADMIN_TOKEN ?? "dev-admin-token
 const outputDirectory = resolve(process.cwd(), "docs", "videos");
 const outputFile = resolve(outputDirectory, "paymentops-dashboard-demo.webm");
 const tempDirectory = resolve(process.cwd(), "tmp", "demo-video");
+const introHoldMs = 2_600;
+const sectionHoldMs = 3_200;
+const actionHoldMs = 1_400;
+const finalHoldMs = 4_000;
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -86,7 +90,7 @@ async function prepareLiveDemo() {
   };
 }
 
-async function pause(page: Page, milliseconds = 850) {
+async function pause(page: Page, milliseconds = sectionHoldMs) {
   await page.waitForTimeout(milliseconds);
 }
 
@@ -96,6 +100,13 @@ async function clickNav(page: Page, label: string) {
     .getByRole("button", { name: new RegExp(label) })
     .click();
   await pause(page);
+}
+
+async function previewScroll(page: Page) {
+  await page.mouse.wheel(0, 520);
+  await pause(page, 1_500);
+  await page.mouse.wheel(0, -520);
+  await pause(page, 1_200);
 }
 
 async function recordLiveDemo() {
@@ -125,33 +136,40 @@ async function recordLiveDemo() {
     await page.getByText("API connected").waitFor({ timeout: 60_000 });
     await page.getByRole("heading", { name: "Overview", level: 1 }).waitFor();
     await page.getByText(demo.tenantName).first().waitFor({ timeout: 30_000 });
-    await pause(page, 1_100);
+    await pause(page, introHoldMs);
+    await previewScroll(page);
 
     await page.getByRole("button", { name: "New payout" }).click();
     const payoutDialog = page.getByRole("dialog", { name: "Create payout" });
     await payoutDialog.waitFor();
+    await pause(page, actionHoldMs);
     await page.getByLabel("Amount in minor units").fill("125000");
     await page.getByLabel("Reference").fill(demo.payoutReference);
+    await pause(page, 700);
     await page.getByLabel("Destination account").fill("acct_live_demo_merchant_bank");
     await page.getByLabel("API key secret").fill(demo.apiKeySecret);
     await page.getByLabel("Idempotency key").fill(demo.idempotencyKey);
+    await pause(page, 700);
     await page.getByLabel("Description").fill("Live Docker Compose demo payout using the real API");
+    await pause(page, actionHoldMs);
     await page.getByRole("button", { name: "Submit payout" }).click();
     await page.getByText("Created payout").waitFor({ timeout: 45_000 });
-    await pause(page, 1_000);
+    await pause(page, 2_800);
 
     await clickNav(page, "Payouts");
     await page.getByText(demo.payoutReference).waitFor({ timeout: 30_000 });
-    await pause(page, 900);
+    await pause(page, sectionHoldMs);
     await clickNav(page, "Approvals");
     await page.getByText("acct_live_demo_merchant_bank").first().waitFor({ timeout: 30_000 });
-    await pause(page, 900);
+    await pause(page, sectionHoldMs);
     await clickNav(page, "Developers");
     await clickNav(page, "Webhooks");
     await clickNav(page, "Reconciliation");
     await clickNav(page, "Audit");
     await page.getByRole("button", { name: "Outbox events" }).click();
-    await pause(page, 1_000);
+    await pause(page, sectionHoldMs);
+    await page.getByRole("button", { name: "Audit trail" }).click();
+    await pause(page, finalHoldMs);
   } finally {
     const video = page.video();
     await context.close();
