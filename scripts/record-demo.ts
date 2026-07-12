@@ -126,6 +126,7 @@ async function recordLiveDemo() {
     }
   });
   const page = await context.newPage();
+  const video = page.video();
   page.on("pageerror", (error) => console.error("pageerror", error.stack ?? error.message));
   page.on("requestfailed", (request) =>
     console.error("requestfailed", request.url(), request.failure()?.errorText)
@@ -171,13 +172,12 @@ async function recordLiveDemo() {
     await page.getByRole("button", { name: "Audit trail" }).click();
     await pause(page, finalHoldMs);
   } finally {
-    const video = page.video();
     await context.close();
     await browser.close();
-
-    if (!video) throw new Error("Playwright did not produce a video artifact.");
-    await copyFile(await video.path(), outputFile);
   }
+
+  if (!video) throw new Error("Playwright did not produce a video artifact.");
+  await copyFile(await video.path(), outputFile);
 
   console.log(`Recorded live full-stack demo for ${demo.tenantId}.`);
   console.log(`Demo video written to ${outputFile}`);
