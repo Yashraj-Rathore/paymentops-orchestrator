@@ -37,6 +37,7 @@
     "auth0:verify": "node scripts/verify-auth0.mjs",
     "security:audit": "pnpm audit --prod --audit-level high",
     "capture:readme": "tsx scripts/capture-readme.ts",
+    "record:demo": "tsx scripts/record-demo.ts",
     "typecheck:quality": "tsc -p tests/contracts/tsconfig.json --noEmit && tsc -p tests/playwright/tsconfig.json --noEmit"
   },
   "devDependencies": {

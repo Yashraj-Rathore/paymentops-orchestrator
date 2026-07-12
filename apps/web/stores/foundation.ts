@@ -63,7 +63,7 @@ export const useFoundationStore = defineStore("foundation", {
   }),
   getters: {
     apiStatus: (state) => (state.dashboard ? "Ready" : "Loading"),
-    tenantId: (state) => state.dashboard?.tenant.id ?? state.activeTenantId
+    tenantId: (state) => state.dashboard?.tenant?.id ?? state.activeTenantId
   },
   actions: {
     async loadSession(apiBaseUrl: string, adminCredential: string) {

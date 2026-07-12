@@ -8,13 +8,15 @@ The current milestone is a foundation, persistence, identity, payout-core, risk-
 
 The seeded operations workspace provides a responsive dashboard for payout monitoring, approvals, integration access, webhook delivery, settlement reconciliation, and audit history.
 
+[Watch the browser-recorded demo](docs/videos/paymentops-dashboard-demo.webm).
+
 ![PaymentOps operations overview](docs/images/dashboard-overview.png)
 
 | Create a payout                                          | Responsive navigation                                            |
 | -------------------------------------------------------- | ---------------------------------------------------------------- |
 | ![Create payout workflow](docs/images/create-payout.png) | ![PaymentOps mobile dashboard](docs/images/dashboard-mobile.png) |
 
-Regenerate these screenshots from a running local stack with `pnpm capture:readme`.
+Regenerate these screenshots from a running local stack with `pnpm capture:readme`. Record the browser demo from the local web app with `pnpm record:demo`.
 
 ## Workspace
 

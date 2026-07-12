@@ -155,12 +155,12 @@ const payoutVolume = computed(() =>
   (dashboard.value?.payouts ?? []).reduce((sum, payout) => sum + payout.amountMinor, 0)
 );
 const paidPayouts = computed(
-  () => dashboard.value?.payouts.filter((payout) => payout.status === "paid").length ?? 0
+  () => dashboard.value?.payouts?.filter((payout) => payout.status === "paid").length ?? 0
 );
 const attentionCount = computed(
   () =>
-    (dashboard.value?.metrics.pendingApprovals ?? 0) +
-    (dashboard.value?.metrics.failedWebhookDeliveries ?? 0) +
+    (dashboard.value?.metrics?.pendingApprovals ?? 0) +
+    (dashboard.value?.metrics?.failedWebhookDeliveries ?? 0) +
     (selectedReconciliation.value?.discrepancyCount ?? 0)
 );
 const deliveryRate = computed(() => {
@@ -219,7 +219,7 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => dashboard.value?.apiClients[0]?.id,
+  () => dashboard.value?.apiClients?.[0]?.id,
   (apiClientId) => {
     if (apiClientId && !apiKeyForm.apiClientId) apiKeyForm.apiClientId = apiClientId;
   },
@@ -612,10 +612,10 @@ function newIdempotencyKey(): string {
       </div>
 
       <div class="tenant-switcher">
-        <div class="tenant-avatar">{{ dashboard?.tenant.name?.slice(0, 1) ?? "N" }}</div>
+        <div class="tenant-avatar">{{ dashboard?.tenant?.name?.slice(0, 1) ?? "N" }}</div>
         <div>
-          <strong>{{ dashboard?.tenant.name ?? "Northstar" }}</strong>
-          <span>{{ dashboard?.tenant.id ?? "Loading tenant" }}</span>
+          <strong>{{ dashboard?.tenant?.name ?? "Northstar" }}</strong>
+          <span>{{ dashboard?.tenant?.id ?? "Loading tenant" }}</span>
         </div>
         <span class="status-dot" :class="{ online: Boolean(dashboard) }" />
       </div>
@@ -633,10 +633,10 @@ function newIdempotencyKey(): string {
           <component :is="item.icon" :size="18" />
           <span>{{ item.label }}</span>
           <span
-            v-if="item.id === 'approvals' && (dashboard?.metrics.pendingApprovals ?? 0) > 0"
+            v-if="item.id === 'approvals' && (dashboard?.metrics?.pendingApprovals ?? 0) > 0"
             class="nav-count"
           >
-            {{ dashboard?.metrics.pendingApprovals }}
+            {{ dashboard?.metrics?.pendingApprovals }}
           </span>
         </button>
       </nav>
@@ -667,7 +667,7 @@ function newIdempotencyKey(): string {
             <Menu :size="20" />
           </button>
           <div>
-            <p>{{ dashboard?.tenant.name ?? "Payment operations" }}</p>
+            <p>{{ dashboard?.tenant?.name ?? "Payment operations" }}</p>
             <h1>{{ pageTitle }}</h1>
           </div>
         </div>
@@ -750,7 +750,7 @@ function newIdempotencyKey(): string {
                 <small>Merchant webhooks</small>
               </div>
               <strong>{{ deliveryRate }}%</strong>
-              <span class="metric-foot">{{ dashboard?.metrics.webhookDeliveries ?? 0 }} attempts</span>
+              <span class="metric-foot">{{ dashboard?.metrics?.webhookDeliveries ?? 0 }} attempts</span>
             </article>
             <article class="metric-card">
               <div class="metric-icon amber"><Clock3 :size="19" /></div>
@@ -758,7 +758,7 @@ function newIdempotencyKey(): string {
                 <span>Pending approvals</span>
                 <small>Risk review</small>
               </div>
-              <strong>{{ dashboard?.metrics.pendingApprovals ?? 0 }}</strong>
+              <strong>{{ dashboard?.metrics?.pendingApprovals ?? 0 }}</strong>
               <button class="metric-link" type="button" @click="navigate('approvals')">
                 Review queue <ChevronRight :size="14" />
               </button>
@@ -819,7 +819,7 @@ function newIdempotencyKey(): string {
                     </tr>
                   </tbody>
                 </table>
-                <div v-if="!dashboard?.payouts.length" class="empty-state">
+                <div v-if="!dashboard?.payouts?.length" class="empty-state">
                   <CircleDollarSign :size="22" />
                   <strong>No payouts yet</strong>
                   <button class="text-button" type="button" @click="openAction('payout')">
@@ -841,7 +841,7 @@ function newIdempotencyKey(): string {
                 <span class="attention-icon amber"><ClipboardCheck :size="17" /></span>
                 <span>
                   <strong>Payout approvals</strong>
-                  <small>{{ dashboard?.metrics.pendingApprovals ?? 0 }} waiting</small>
+                  <small>{{ dashboard?.metrics?.pendingApprovals ?? 0 }} waiting</small>
                 </span>
                 <ChevronRight :size="16" />
               </button>
@@ -849,7 +849,7 @@ function newIdempotencyKey(): string {
                 <span class="attention-icon red"><Webhook :size="17" /></span>
                 <span>
                   <strong>Webhook failures</strong>
-                  <small>{{ dashboard?.metrics.failedWebhookDeliveries ?? 0 }} unresolved</small>
+                  <small>{{ dashboard?.metrics?.failedWebhookDeliveries ?? 0 }} unresolved</small>
                 </span>
                 <ChevronRight :size="16" />
               </button>
@@ -877,15 +877,15 @@ function newIdempotencyKey(): string {
               </div>
               <div class="signal-row">
                 <span><Database :size="17" /> Outbox queue</span>
-                <strong>{{ dashboard?.metrics.pendingOutboxEvents ?? 0 }} pending</strong>
+                <strong>{{ dashboard?.metrics?.pendingOutboxEvents ?? 0 }} pending</strong>
               </div>
               <div class="signal-row">
                 <span><ShieldCheck :size="17" /> Risk rules</span>
-                <strong>{{ dashboard?.metrics.riskRules ?? 0 }} active</strong>
+                <strong>{{ dashboard?.metrics?.riskRules ?? 0 }} active</strong>
               </div>
               <div class="signal-row">
                 <span><Activity :size="17" /> Ledger</span>
-                <strong>{{ dashboard?.metrics.ledgerEntries ?? 0 }} entries</strong>
+                <strong>{{ dashboard?.metrics?.ledgerEntries ?? 0 }} entries</strong>
               </div>
             </article>
           </section>
@@ -973,7 +973,7 @@ function newIdempotencyKey(): string {
               </div>
               <span class="queue-summary">
                 <Clock3 :size="16" />
-                {{ dashboard?.metrics.pendingApprovals ?? 0 }} pending
+                {{ dashboard?.metrics?.pendingApprovals ?? 0 }} pending
               </span>
             </header>
 
@@ -1018,7 +1018,7 @@ function newIdempotencyKey(): string {
                   </button>
                 </div>
               </div>
-              <div v-if="!dashboard?.approvals.length" class="empty-state generous">
+              <div v-if="!dashboard?.approvals?.length" class="empty-state generous">
                 <CheckCircle2 :size="26" />
                 <strong>No payouts need review</strong>
                 <span>The approval queue is clear.</span>
@@ -1031,7 +1031,7 @@ function newIdempotencyKey(): string {
                   <p>Policy controls</p>
                   <h2>Active risk rules</h2>
                 </div>
-                <span class="count-badge">{{ dashboard?.riskRules.length ?? 0 }}</span>
+                <span class="count-badge">{{ dashboard?.riskRules?.length ?? 0 }}</span>
               </header>
               <div class="resource-list">
                 <div v-for="rule in dashboard?.riskRules" :key="rule.id" class="resource-row">
@@ -1068,7 +1068,7 @@ function newIdempotencyKey(): string {
                   @click="toggleTenant"
                 >
                   <Ban :size="16" />
-                  {{ dashboard?.tenant.status === "active" ? "Suspend tenant" : "Activate tenant" }}
+                  {{ dashboard?.tenant?.status === "active" ? "Suspend tenant" : "Activate tenant" }}
                 </button>
                 <button class="secondary-button" type="button" @click="openAction('client')">
                   <Server :size="16" /> API client
@@ -1235,19 +1235,19 @@ function newIdempotencyKey(): string {
             <section class="webhook-summary">
               <article>
                 <span>Endpoints</span>
-                <strong>{{ dashboard?.metrics.webhookEndpoints ?? 0 }}</strong>
+                <strong>{{ dashboard?.metrics?.webhookEndpoints ?? 0 }}</strong>
               </article>
               <article>
                 <span>Deliveries</span>
-                <strong>{{ dashboard?.metrics.webhookDeliveries ?? 0 }}</strong>
+                <strong>{{ dashboard?.metrics?.webhookDeliveries ?? 0 }}</strong>
               </article>
               <article>
                 <span>Success rate</span>
                 <strong>{{ deliveryRate }}%</strong>
               </article>
-              <article :class="{ alert: (dashboard?.metrics.failedWebhookDeliveries ?? 0) > 0 }">
+              <article :class="{ alert: (dashboard?.metrics?.failedWebhookDeliveries ?? 0) > 0 }">
                 <span>Failed</span>
-                <strong>{{ dashboard?.metrics.failedWebhookDeliveries ?? 0 }}</strong>
+                <strong>{{ dashboard?.metrics?.failedWebhookDeliveries ?? 0 }}</strong>
               </article>
             </section>
 
@@ -1598,7 +1598,7 @@ function newIdempotencyKey(): string {
               </div>
               <span class="queue-summary">
                 <Database :size="16" />
-                {{ dashboard?.metrics.ledgerEntries ?? 0 }} ledger entries
+                {{ dashboard?.metrics?.ledgerEntries ?? 0 }} ledger entries
               </span>
             </header>
 
@@ -1814,7 +1814,7 @@ function newIdempotencyKey(): string {
               </label>
               <div class="form-context">
                 <Server :size="17" />
-                <span>Client will belong to {{ dashboard?.tenant.name ?? "the active tenant" }}.</span>
+                <span>Client will belong to {{ dashboard?.tenant?.name ?? "the active tenant" }}.</span>
               </div>
               <button
                 class="primary-button full-button"
